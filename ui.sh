@@ -3,9 +3,11 @@ printf "Bash version: %s\n" "$BASH_VERSION"
 set -euo pipefail
 
 export NG_CLI_ANALYTICS=false
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+# Get the current working directory
+CURRENT_DIRECTORY=$(pwd)
+SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 
-pushd ${ROOT_DIR} >/dev/null
+pushd ${SCRIPT_PATH} >/dev/null
 trap cleanup EXIT
 
 function success() {
@@ -75,14 +77,16 @@ function save_exact() {
 
 function init() {
   local PROJECT_NAME=$1
+  local PROJECT_PATH="$CURRENT_DIRECTORY/$PROJECT_NAME"
   local UI_FOLDER_NAME=${2:-'ui'}
+  local UI_PATH="$PROJECT_PATH/$UI_FOLDER_NAME"
 
-  printf "destroying '%s' folder.\n" "$PROJECT_NAME"
-  destroy "$PROJECT_NAME"
+  printf "destroying '%s' folder.\n" "$PROJECT_PATH"
+  destroy "$PROJECT_PATH"
 
-  printf "creating '%s' folder.\n" "$PROJECT_NAME"
-  mkdir -p "$PROJECT_NAME"
-  pushd "$PROJECT_NAME" >/dev/null
+  printf "creating '%s' folder.\n" "$PROJECT_PATH"
+  mkdir -p "$PROJECT_PATH"
+  pushd "$PROJECT_PATH" >/dev/null
     save_exact
     echo -e "node_modules
   dist/
@@ -94,9 +98,9 @@ function init() {
     npm install --save-exact --save-dev @angular/cli@latest
   popd >/dev/null
 
-  printf "creating '%s' folder.\n" "$PROJECT_NAME/$UI_FOLDER_NAME"
-  mkdir -p "$PROJECT_NAME/$UI_FOLDER_NAME"
-  pushd "$PROJECT_NAME/$UI_FOLDER_NAME" >/dev/null
+  printf "creating '%s' folder.\n" "$UI_PATH"
+  mkdir -p "$UI_PATH"
+  pushd "$UI_PATH" >/dev/null
 
   save_exact
   npx ng new "$UI_FOLDER_NAME" --ssr=false --directory ./ --routing --style=less --minimal --skip-tests --minimal --skip-git --strict
@@ -124,7 +128,7 @@ function init() {
   popd
 
   echo "✔ All done. Starting ui server from the folder of '$PROJECT_NAME/$UI_FOLDER_NAME' ...\n" | success
-  start "$PROJECT_NAME/$UI_FOLDER_NAME"
+  start "$CURRENT_DIRECTORY/$PROJECT_NAME/$UI_FOLDER_NAME"
 }
 
 function generate_page() {
