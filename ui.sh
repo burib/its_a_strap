@@ -8,6 +8,42 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 pushd ${ROOT_DIR} >/dev/null
 trap cleanup EXIT
 
+function success() {
+  echo -e "\x1B[32m$(</dev/stdin)\x1B[0m"
+}
+
+function titleCase() {
+    # Read input from stdin
+    while read -r line; do
+        local string="$line"
+        local result=""
+        local word=""
+
+        # Convert each word to title case
+        for word in $string; do
+            # Convert hyphens to spaces and capitalize each word
+            result="$result $(echo "${word//-/ }" | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) tolower(substr($i,2));}1')"
+        done
+
+        # Remove leading whitespace
+        result="${result## }"
+
+        echo "$result"
+    done
+}
+
+function should_continue() {
+  # echo the first parameter in yellow color
+  echo -e "\x1B[33m$1\x1B[0m"
+  read -r CONTINUE
+  if [[ "$CONTINUE" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+    echo "Continuing..."
+  else
+    echo "Exiting..."
+    exit 1
+  fi
+}
+
 function cleanup() {
   popd >/dev/null
 }
@@ -41,6 +77,9 @@ function init() {
   local PROJECT_NAME=$1
   local UI_FOLDER_NAME=${2:-'ui'}
 
+  printf "destroying '%s' folder.\n" "$PROJECT_NAME"
+  destroy "$PROJECT_NAME"
+
   printf "creating '%s' folder.\n" "$PROJECT_NAME"
   mkdir -p "$PROJECT_NAME"
   pushd "$PROJECT_NAME" >/dev/null
@@ -60,21 +99,31 @@ function init() {
   pushd "$PROJECT_NAME/$UI_FOLDER_NAME" >/dev/null
 
   save_exact
-  npx ng new "$UI_FOLDER_NAME" --directory ./ --routing --style=less --verbose --minimal --skip-tests --minimal --skip-git --strict
+  npx ng new "$UI_FOLDER_NAME" --ssr=false --directory ./ --routing --style=less --minimal --skip-tests --minimal --skip-git --strict
   npx ng add @angular-eslint/schematics --skip-confirmation --verbose
-  npx ng add @cypress/schematic --skip-confirmation --e2e-update --verbose
+  npx ng add @cypress/schematic --skip-confirmation --e2e --verbose --interactive false
 
+#  should_continue "Angular initiated. Setting up NG Zorro now. Do you want to continue? (Y/N)"
   npx ng add ng-zorro-antd@latest --skip-confirmation --verbose \
-    --dynamic-icon true \
-    --skip-install true \
-    --template sidemenu \
-    --theme true \
+    --dynamic-icon \
+    --skip-install \
+    --template "sidemenu" \
+    --theme \
     --project "$UI_FOLDER_NAME" \
     --locale "en_US"
 
+  echo '@import "ng-zorro-antd/ng-zorro-antd.less";' >> "src/styles.less"
+  (echo 'import { provideAnimations } from "@angular/platform-browser/animations";' && cat src/app/app.config.ts) > src/app/app.config.ts.tmp && mv src/app/app.config.ts.tmp src/app/app.config.ts
+  sed -i '' -e 's/providers: \[provideRouter(routes), provideNzIcons()\]/providers: \[provideRouter(routes), provideNzIcons(), provideAnimations()\]/' src/app/app.config.ts
+
+  # replace text 'Ant Design Of Angular' with $PROJECT_NAME
+  local PROJECT_NAME_TITLE=$(echo "$PROJECT_NAME" | titleCase)
+  echo "Replacing 'Ant Design Of Angular' with '$PROJECT_NAME_TITLE' ..."
+  sed -i '' -e "s/Ant Design Of Angular/$PROJECT_NAME_TITLE/ig" src/app/app.component.html
+
   popd
 
-  printf "✔ All done. Starting ui server from the folder of '%s' ...\n" "\x1B[32m" "$PROJECT_NAME/$UI_FOLDER_NAME"
+  echo "✔ All done. Starting ui server from the folder of '$PROJECT_NAME/$UI_FOLDER_NAME' ...\n" | success
   start "$PROJECT_NAME/$UI_FOLDER_NAME"
 }
 
