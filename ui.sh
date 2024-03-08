@@ -14,6 +14,18 @@ function success() {
   echo -e "\x1B[32m$(</dev/stdin)\x1B[0m"
 }
 
+function warning() {
+  echo -e "\x1B[33m$(</dev/stdin)\x1B[0m"
+}
+
+function error() {
+  echo -e "\x1B[31m$(</dev/stdin)\x1B[0m"
+}
+
+function info() {
+  echo -e "\x1B[34m$(</dev/stdin)\x1B[0m"
+}
+
 function titleCase() {
     # Read input from stdin
     while read -r line; do
@@ -117,8 +129,9 @@ function init() {
     --locale "en_US"
 
   echo '@import "ng-zorro-antd/ng-zorro-antd.less";' >> "src/styles.less"
+  (echo 'import { provideHttpClient } from "@angular/common/http";' && cat src/app/app.config.ts) > src/app/app.config.ts.tmp && mv src/app/app.config.ts.tmp src/app/app.config.ts
   (echo 'import { provideAnimations } from "@angular/platform-browser/animations";' && cat src/app/app.config.ts) > src/app/app.config.ts.tmp && mv src/app/app.config.ts.tmp src/app/app.config.ts
-  sed -i '' -e 's/providers: \[provideRouter(routes), provideNzIcons()\]/providers: \[provideRouter(routes), provideNzIcons(), provideAnimations()\]/' src/app/app.config.ts
+  sed -i '' -e 's/providers: \[provideRouter(routes), provideNzIcons()\]/providers: \[provideRouter(routes), provideNzIcons(), provideAnimations(), provideHttpClient()\]/' src/app/app.config.ts
 
   # replace text 'Ant Design Of Angular' with $PROJECT_NAME
   local PROJECT_NAME_TITLE=$(echo "$PROJECT_NAME" | titleCase)
