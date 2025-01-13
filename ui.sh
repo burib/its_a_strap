@@ -11,20 +11,23 @@ pushd ${SCRIPT_PATH} >/dev/null
 trap cleanup EXIT
 
 function success() {
-  echo -e "\x1B[32m$(</dev/stdin)\x1B[0m"
+  echo -e "\x1B[32m$1\x1B[0m"
 }
 
 function warning() {
-  echo -e "\x1B[33m$(</dev/stdin)\x1B[0m"
+  echo -e "\x1B[33m$1\x1B[0m"
 }
 
 function error() {
-  echo -e "\x1B[31m$(</dev/stdin)\x1B[0m"
+  echo -e "\x1B[31m$1\x1B[0m"
 }
 
 function info() {
-  echo -e "\x1B[34m$(</dev/stdin)\x1B[0m"
+  echo -e "\x1B[34m$1\x1B[0m"
 }
+#function info() {
+#  echo -e "\x1B[34m$(</dev/stdin)\x1B[0m"
+#}
 
 function titleCase() {
     # Read input from stdin
@@ -88,12 +91,18 @@ function save_exact() {
 }
 
 function init() {
-  local PROJECT_NAME=$1
+  # read PROJECT_NAME from terminal using read, should default to hq-app
+  local PROJECT_NAME=${1:-'hq-app'}
+  read -e -p "Enter Your Project Folder Name:" -i "$PROJECT_NAME" PROJECT_NAME # read the project name from the terminal
+  info "Project name: $PROJECT_NAME"
+  local PROJECT_NAME_TITLE=$(echo "$PROJECT_NAME" | titleCase)
+
   local PROJECT_PATH="$CURRENT_DIRECTORY/$PROJECT_NAME"
   local UI_FOLDER_NAME=${2:-'ui'}
   local UI_PATH="$PROJECT_PATH/$UI_FOLDER_NAME"
 
   printf "destroying '%s' folder.\n" "$PROJECT_PATH"
+  info "destroying '$PROJECT_PATH' folder.\n"
   destroy "$PROJECT_PATH"
 
   printf "creating '%s' folder.\n" "$PROJECT_PATH"
@@ -119,7 +128,7 @@ function init() {
   npx ng add @angular-eslint/schematics --skip-confirmation --verbose
   npx ng add @cypress/schematic --skip-confirmation --e2e --verbose --interactive false
 
-#  should_continue "Angular initiated. Setting up NG Zorro now. Do you want to continue? (Y/N)"
+  info "NG setup done. Adding NG Zorro ..."
   npx ng add ng-zorro-antd@latest --skip-confirmation --verbose \
     --dynamic-icon \
     --skip-install \
@@ -128,19 +137,157 @@ function init() {
     --project "$UI_FOLDER_NAME" \
     --locale "en_US"
 
-  echo '@import "ng-zorro-antd/ng-zorro-antd.less";' >> "src/styles.less"
-  (echo 'import { provideHttpClient } from "@angular/common/http";' && cat src/app/app.config.ts) > src/app/app.config.ts.tmp && mv src/app/app.config.ts.tmp src/app/app.config.ts
-  (echo 'import { provideAnimations } from "@angular/platform-browser/animations";' && cat src/app/app.config.ts) > src/app/app.config.ts.tmp && mv src/app/app.config.ts.tmp src/app/app.config.ts
-  sed -i '' -e 's/providers: \[provideRouter(routes), provideNzIcons()\]/providers: \[provideRouter(routes), provideNzIcons(), provideAnimations(), provideHttpClient()\]/' src/app/app.config.ts
+  info "NG Zorro setup done."
+
+  local ICONS_PROVIDER_FILE_CONTENT=$(cat <<'EOF'
+import { IconDefinition } from '@ant-design/icons-angular';
+import { NzIconModule,provideNzIcons } from 'ng-zorro-antd/icon';
+
+import { MenuFoldOutline, MenuUnfoldOutline, FormOutline, DashboardOutline } from '@ant-design/icons-angular/icons';
+
+const icons: IconDefinition[] = [MenuFoldOutline, MenuUnfoldOutline, DashboardOutline, FormOutline];
+
+export const iconsProvider = provideNzIcons(icons);
+EOF
+)
+
+  local APP_CONFIG_SERVICE_FILE_CONTENT=$(cat <<'EOF'
+import { Injectable } from '@angular/core';
+import { ConfigModel } from "./app.config";
+@Injectable({
+  providedIn: 'root'
+})
+
+export class AppConfigService {
+  config: ConfigModel;
+
+  setConfig(config: ConfigModel | undefined) {
+    if (config === undefined) {
+      throw new Error('Config is null or undefined');
+    } else {
+      this.config = config;
+    }
+  }
+  getConfig() {
+    return this.config;
+  }
+  constructor() {
+    this.config = {
+      "restApiEndpoint": "http://localhost:8080",
+      "loginUrl": "http://localhost:8080/login",
+      "logoutUrl": "http://localhost:8080/logout",
+      "refreshUrl": "http://localhost:8080/refresh",
+      "tokenUrl": "http://localhost:8080/token",
+      "clientId": "randomClientId"
+    };
+  }
+}
+EOF
+
+)
+  info "Creating app.config.service.ts file ..."
+  echo "$APP_CONFIG_SERVICE_FILE_CONTENT" > src/app/app.config.service.ts
+
+  local APP_CONFIG_FILE_CONTENT=$(cat <<'EOF'
+import { provideAnimations } from "@angular/platform-browser/animations";
+import { HttpClient, provideHttpClient} from "@angular/common/http";
+
+import { APP_INITIALIZER, ApplicationConfig, provideZoneChangeDetection } from '@angular/core';
+import { provideRouter } from '@angular/router';
+
+import { routes } from './app.routes';
+import { iconsProvider } from './icons-provider';
+import {AppConfigService} from "./app.config.service";
+export interface ConfigModel {
+  restApiEndpoint: string;
+  loginUrl: string;
+  logoutUrl: string;
+  refreshUrl: string;
+  tokenUrl: string;
+  clientId: string;
+}
+export function initializeApp(http: HttpClient, configService: AppConfigService) {
+  return async () => {
+    const configPath = 'assets/config.json';
+    await http.get<ConfigModel>(configPath).toPromise().then(
+        response => {
+          configService.setConfig(response);
+        },
+        error => {
+          const errorMessage = `Failed to load the app config from ${configPath}.
+            Please create ${configPath} and make sure it contains the app config.
+            The app config should be a JSON file with the following structure:
+            {
+              "restApiEndpoint": "http://localhost:8080",
+              "loginUrl": "http://localhost:8080/login",
+              "logoutUrl": "http://localhost:8080/logout",
+              "refreshUrl": "http://localhost:8080/refresh",
+              "tokenUrl": "http://localhost:8080/token",
+              "clientId": "randomClientId"
+            }
+            `;
+          console.error('Failed to load the app config', error);
+          throw new Error(errorMessage);
+        }
+    );
+  };
+}
+export const appConfig: ApplicationConfig = {
+  providers: [provideZoneChangeDetection({ eventCoalescing: true }), provideRouter(routes), iconsProvider, provideAnimations(), provideHttpClient(), AppConfigService, {
+    provide: APP_INITIALIZER,
+    useFactory: initializeApp,
+    multi: true,
+    deps: [HttpClient, AppConfigService],
+  }],
+};
+
+EOF
+)
+  info "Creating app.config.ts file ..."
+  echo "$APP_CONFIG_FILE_CONTENT" > src/app/app.config.ts
+
+  local CONFIG_JSON_CONTENT=$(cat <<'EOF'
+{
+  "restApiEndpoint": "http://localhost:8080",
+  "loginUrl": "http://localhost:8080/login",
+  "logoutUrl": "http://localhost:8080/logout",
+  "refreshUrl": "http://localhost:8080/refresh",
+  "tokenUrl": "http://localhost:8080/token",
+  "clientId": "randomClientId"
+}
+EOF
+)
+  info "Creating icons-provider.ts file ..."
+  echo "$ICONS_PROVIDER_FILE_CONTENT" > src/app/icons-provider.ts
+
+  info "Creating config.json file in 'public/assets' folder ..."
+  mkdir -p public/assets
+  echo "$CONFIG_JSON_CONTENT" > public/assets/config.json
 
   # replace text 'Ant Design Of Angular' with $PROJECT_NAME
-  local PROJECT_NAME_TITLE=$(echo "$PROJECT_NAME" | titleCase)
   echo "Replacing 'Ant Design Of Angular' with '$PROJECT_NAME_TITLE' ..."
   sed -i '' -e "s/Ant Design Of Angular/$PROJECT_NAME_TITLE/ig" src/app/app.component.html
 
+  info "Replacing <title> in src/index.html ..."
+  sed -i '' -e "s/<title>Ui<\/title>/<title>$PROJECT_NAME_TITLE<\/title>/ig" src/index.html
+
+  local STYLESS_DOT_LESS_FILE_CONTENT=$(cat <<'EOF'
+/* You can add global styles to this file, and also import other style files */
+@import "ng-zorro-antd/ng-zorro-antd.less";
+
+nz-layout.ant-layout.app-layout {
+  height: auto;
+  min-height: 100vh;
+}
+EOF
+)
+
+  info "Creating styles.less file ..."
+  echo "$STYLESS_DOT_LESS_FILE_CONTENT" > src/styles.less
+
   popd
 
-  echo "✔ All done. Starting ui server from the folder of '$PROJECT_NAME/$UI_FOLDER_NAME' ...\n" | success
+  success "✔ All done. Starting ui server from the folder of '$PROJECT_NAME/$UI_FOLDER_NAME' ...\n"
   start "$CURRENT_DIRECTORY/$PROJECT_NAME/$UI_FOLDER_NAME"
 }
 
