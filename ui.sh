@@ -141,7 +141,7 @@ function create_fake_json_server() {
   ],
   "profile": {
     "name": "Demo User",
-    "email": "demo@example.com",
+     "email": "demo@example.com",
     "avatar": "https://placekitten.com/200/200"
   }
 }
@@ -164,6 +164,8 @@ export interface Todo {
   createdAt: string;
   updatedAt: string;
   ttl?: number;
+  editingTitle?: boolean;
+  editingDescription?: boolean;
 }
 
 export type CreateTodoDto = Omit<Todo, 'id' | 'userId' | 'createdAt' | 'updatedAt' | 'ttl'>;
@@ -178,7 +180,7 @@ function create_todo_service() {
   local TODO_SERVICE_CONTENT=$(cat <<'EOF'
 import { Injectable, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { Observable } from 'rxjs';
+import { Observable, tap } from 'rxjs';
 import { Todo, CreateTodoDto, UpdateTodoDto } from './todo.model';
 import { AppConfigService } from '../../../app.config.service';
 
@@ -203,7 +205,12 @@ export class TodoService {
   }
 
   updateTodo(id: string, updates: UpdateTodoDto): Observable<Todo> {
-    return this.http.patch<Todo>(`${this.baseUrl}/${id}`, updates);
+    return this.http.patch<Todo>(`${this.baseUrl}/${id}`, updates).pipe(
+      tap(updatedTodo => {
+        // Now service is also publishing the updated todo after successful update
+        // so component can update in list and no need to recall list.
+      })
+    );
   }
 
   deleteTodo(id: string): Observable<void> {
@@ -251,16 +258,16 @@ EOF
 function create_todo_list_component() {
     local TODO_COMPONENTS_DIRECTORY=$1
     local TODO_LIST_COMPONENT_CONTENT=$(cat <<'EOF'
-import { Component, inject, signal, OnInit, OnDestroy } from '@angular/core';
+import { Component, inject, signal, OnInit, OnDestroy, ElementRef, ViewChild } from '@angular/core';
 import { CommonModule, DatePipe } from '@angular/common';
-import { FormsModule } from '@angular/forms';
+import { FormsModule, ReactiveFormsModule, FormBuilder, FormGroup, Validators } from '@angular/forms';
 import { NzButtonModule } from 'ng-zorro-antd/button';
 import { NzInputModule } from 'ng-zorro-antd/input';
 import { NzIconModule } from 'ng-zorro-antd/icon';
 import { NzListModule } from 'ng-zorro-antd/list';
 import { NzCheckboxModule } from 'ng-zorro-antd/checkbox';
 import { TodoService } from './state/todo.service';
-import { Todo } from './state/todo.model';
+import { Todo, UpdateTodoDto } from './state/todo.model';
 import { Router, RouterModule } from '@angular/router';
 import { NzModalService, NzModalModule } from 'ng-zorro-antd/modal';
 import { TodoModalComponent } from './todo-modal.component';
@@ -268,6 +275,9 @@ import { TodoCommunicationService } from '../../core/services/todo-communication
 import { Subscription } from 'rxjs'; // Import Subscription
 import { NzTagModule } from 'ng-zorro-antd/tag'; // Import for the status tags
 import { NzPopconfirmModule } from 'ng-zorro-antd/popconfirm';  // Import pop confirm module
+import { NzDatePickerModule } from 'ng-zorro-antd/date-picker';
+import { NzFormModule } from 'ng-zorro-antd/form';
+
 
 @Component({
   selector: 'todo-list',
@@ -284,7 +294,10 @@ import { NzPopconfirmModule } from 'ng-zorro-antd/popconfirm';  // Import pop co
         NzModalModule,
         NzTagModule,
         NzPopconfirmModule,
-        DatePipe
+        DatePipe,
+        ReactiveFormsModule,
+        NzDatePickerModule,
+        NzFormModule
     ],
   templateUrl: './todo-list.component.html',
   styleUrls: ['./todo-list.component.less'],
@@ -294,10 +307,16 @@ export class TodoListComponent implements OnInit, OnDestroy {
   private router = inject(Router);
   private modalService = inject(NzModalService);
     private todoCommunicationService = inject(TodoCommunicationService);
+   private fb = inject(FormBuilder);
   todos = signal<Todo[]>([]);
   newTodoTitle = '';
   private todoCreatedSubscription: Subscription | undefined;
   private todoUpdatedSubscription: Subscription | undefined;
+  addTodoForm: FormGroup = this.fb.group({
+    title: ['', Validators.required],
+    description: [''],
+    dueDate: [null] // Add dueDate control
+  });
 
   constructor() {
   }
@@ -308,9 +327,15 @@ export class TodoListComponent implements OnInit, OnDestroy {
         this.addTodoToList(todo);
       });
 
-      this.todoUpdatedSubscription = this.todoCommunicationService.todoUpdated$.subscribe(todo => {
-           this.updateTodoInList(todo);
+      this.todoUpdatedSubscription = this.todoCommunicationService.todoUpdated$.subscribe(updatedTodo => {
+           this.updateTodoInList(updatedTodo);
       });
+
+    this.addTodoForm = this.fb.group({
+      title: ['', Validators.required],
+      description: [''],
+      dueDate: [null] // Add dueDate control
+    });
   }
 
   ngOnDestroy() {
@@ -320,7 +345,34 @@ export class TodoListComponent implements OnInit, OnDestroy {
   }
 
   private loadTodos() {
-    this.todoService.getTodos().subscribe(todos => this.todos.set(todos));
+    this.todoService.getTodos().subscribe(todos => {
+      todos.forEach(todo => {
+        todo.dueDate = new Date(todo.dueDate);
+        todo.editingTitle = false;
+        todo.editingDescription = false;
+      });
+      this.todos.set(todos);
+    });
+  }
+
+  submitNewTodo(): void {
+    if (this.addTodoForm.valid) {
+      const title = this.addTodoForm.get('title')?.value;
+      const description = this.addTodoForm.get('description')?.value;
+      const dueDate = this.addTodoForm.get('dueDate')?.value;
+
+      this.todoService.createTodo({ title: title, description: description, dueDate: dueDate, status: 'pending' }).subscribe(
+        (newTodo) => {
+          this.todos.update(todos => [...todos, newTodo]);
+          this.addTodoForm.reset();
+        },
+        (error) => {
+          console.error('Error creating todo:', error);
+        }
+      );
+    } else {
+      console.log('Form is invalid');
+    }
   }
 
   addTodo() {
@@ -329,9 +381,18 @@ export class TodoListComponent implements OnInit, OnDestroy {
 
   toggleTodo(todo: Todo) {
     const newStatus = todo.status === 'completed' ? 'pending' : 'completed';
-    this.todoService.updateTodo(todo.id, { status: newStatus })
+    this.todoService.updateTodo(todo.id, { status: newStatus } as any)
     .subscribe(() => this.loadTodos());
   }
+
+  confirmDelete(id: string): void {
+    this.todoService.deleteTodo(id).subscribe(() => this.loadTodos());
+  }
+
+  cancelDelete(): void {
+    console.log('Delete canceled');
+  }
+
 
   editTodo(todo: Todo) {
     this.modalService.create({
@@ -344,34 +405,67 @@ export class TodoListComponent implements OnInit, OnDestroy {
     });
   }
 
-  deleteTodo(id: string) {
-    this.todoService.deleteTodo(id)
-      .subscribe(() => this.loadTodos());
-  }
-
-  confirmDelete(id: string): void {
-    this.todoService.deleteTodo(id).subscribe(() => this.loadTodos());
-  }
-
-  cancelDelete(): void {
-    console.log('Delete canceled');
-  }
-
   addTodoToList(todo: Todo) {
         this.todos.update(todos => [...todos, todo]);
     }
 
-    updateTodoInList(updatedTodo: Todo) {
+  updateTodoInList(updatedTodo: Todo) {
         this.todos.update(todos => {
             return todos.map(todo => {
                 if (todo.id === updatedTodo.id) {
-                    return { ...todo, ...updatedTodo };
+                    return updatedTodo; // replace with updated todo
                 }
-                return todo;
+                return todo; // otherwise return the original todo
             });
         });
     }
 
+  trackByTodoId(_index: number, todo: Todo): string {
+    return todo.id;
+  }
+
+  startEditTitle(todo: Todo) {
+    todo.editingTitle = true;
+    setTimeout(() => {
+      const element = document.querySelector(`.todo-title[data-todo-id="${todo.id}"]`);
+      if (element) {
+        (element as HTMLElement).focus();
+      }
+    }, 0);
+  }
+
+  endEditTitle(todo: Todo) {
+    todo.editingTitle = false;
+    const element = document.querySelector(`.todo-title[data-todo-id="${todo.id}"]`) as HTMLElement;
+    if (element) {
+      const newTitle = element.innerText;
+      if (newTitle !== todo.title) {
+        this.updateTodo(todo, { title: newTitle });
+      }
+    }
+  }
+
+  startEditDescription(todo: Todo) {
+    todo.editingDescription = true;
+  }
+
+  endEditDescription(todo: Todo) {
+    todo.editingDescription = false;
+    const element = document.querySelector(`.todo-description[data-todo-id="${todo.id}"]`) as HTMLElement;
+    if (element) {
+      const newDescription = element.innerText;
+      if (newDescription !== todo.description) {
+        this.updateTodo(todo, { description: newDescription });
+      }
+    }
+  }
+
+  private updateTodo(todo: Todo, updates: UpdateTodoDto) {
+    this.todoService.updateTodo(todo.id, updates)
+        .subscribe(updatedTodo => {
+            this.todoCommunicationService.todoUpdated(updatedTodo); // Now publish updated todo itself
+        });
+  }
 }
 EOF
 )
@@ -383,12 +477,37 @@ EOF
   <div class="todo-header">
     <h1>My Todos</h1>
     <button nz-button nzType="primary" (click)="addTodo()">
-      <span nz-icon nzType="plus" nzTheme="outline"></span>Add Todo
+      <span nz-icon nzType="plus" nzTheme="outline"></span> Add Todo
     </button>
   </div>
 
+  <div class="todo-form">
+    <h2>Add New Todo</h2>
+    <form nz-form [formGroup]="addTodoForm" (ngSubmit)="submitNewTodo()">
+      <nz-form-item>
+        <nz-form-control>
+          <input nz-input formControlName="title" placeholder="Title" />
+        </nz-form-control>
+      </nz-form-item>
+      <nz-form-item>
+        <nz-form-control>
+          <textarea nz-input formControlName="description" rows="2" placeholder="Description"></textarea>
+        </nz-form-control>
+      </nz-form-item>
+        <nz-form-item>
+            <nz-form-control>
+                <nz-date-picker formControlName="dueDate" nzPlaceHolder="Due Date"></nz-date-picker>
+            </nz-form-control>
+        </nz-form-item>
+      <nz-form-item>
+        <nz-form-control>
+          <button nz-button nzType="primary" [disabled]="!addTodoForm.valid">Add Todo</button>
+        </nz-form-control>
+      </nz-form-item>
+    </form>
+  </div>
   <nz-list nzItemLayout="vertical">
-    <nz-list-item *ngFor="let todo of todos()" class="todo-item">
+    <nz-list-item *ngFor="let todo of todos(); trackBy: trackByTodoId" class="todo-item">
       <div nz-list-item-extra>
         <a nz-button nzType="primary" nzShape="circle" (click)="editTodo(todo)">
           <span nz-icon nzType="edit" nzTheme="outline"></span>
@@ -406,17 +525,29 @@ EOF
       <div nz-list-item-content>
           <div class='todo-item-content' [class.todo-item-completed]="todo.status === 'completed'">
             <label nz-checkbox [ngModel]="todo.status === 'completed'" (ngModelChange)="toggleTodo(todo)"></label>
-            <div class="todo-text-content">
+            <div class="todo-text-content" >
               <div class="todo-title-status">
-                <span class="todo-title">{{ todo.title }}</span>
-                <nz-tag *ngIf="todo.status === 'completed'" nzColor="success">Completed</nz-tag>
-                <nz-tag *ngIf="todo.status === 'pending'" nzColor="warning">Pending</nz-tag>
-              </div>
-              <div class="todo-description-date">
-                <span class="todo-description">{{ todo.description }}</span>
-                <small class="todo-due-date">Due Date: {{ todo.dueDate | date }}</small>
-              </div>
-            </div>
+                <span class="todo-title"
+                      (click)="startEditTitle(todo)"
+                      [contentEditable]="!!todo.editingTitle"
+                      (blur)="endEditTitle(todo)"
+                      (keydown.enter)="endEditTitle(todo)"
+                      [attr.data-todo-id]="todo.id"
+                     >{{ todo.title }}</span>
+                 <nz-tag *ngIf="todo.status === 'completed'" nzColor="success">Completed</nz-tag>
+                 <nz-tag *ngIf="todo.status === 'pending'" nzColor="warning">Pending</nz-tag>
+               </div>
+               <div class="todo-description-date">
+                 <span class="todo-description"
+                  (click)="startEditDescription(todo)"
+                  [contentEditable]="!!todo.editingDescription"
+                  (blur)="endEditDescription(todo)"
+                  (keydown.enter)="endEditDescription(todo)"
+                  [attr.data-todo-id]="todo.id"
+                 >{{ todo.description }}</span>
+                 <small class="todo-due-date">Due Date: {{ todo.dueDate | date }}</small>
+               </div>
+             </div>
           </div>
       </div>
     </nz-list-item>
@@ -713,7 +844,7 @@ function create_app_component() {
           </ul>
         </li>
       </ng-container>
-    </ul>
+     </ul>
   </nz-sider>
   <nz-layout>
     <nz-header>
@@ -922,6 +1053,13 @@ function create_todo_less_file() {
     border-bottom: none;
   }
 
+  .todo-form {
+    margin-bottom: 20px;
+    padding: 20px;
+    border: 1px solid #e8e8e8;
+    border-radius: 4px;
+  }
+
   .todo-item-content {
     display: flex;
     align-items: flex-start; /* Align checkbox and text vertically */
@@ -958,10 +1096,20 @@ function create_todo_less_file() {
   .todo-title {
     font-size: 1.2em;
     font-weight: 500;
+
+    &:hover {
+      cursor: text;
+    }
   }
 
   .todo-description {
     // Style description if needed
+    color: #777;
+    font-size: 0.9em;
+
+    &:hover {
+      cursor: text;
+    }
   }
 
   .todo-due-date {
@@ -1145,7 +1293,7 @@ export function initializeApp(http: HttpClient, configService: AppConfigService)
 export const appConfig: ApplicationConfig = {
  providers: [
    provideNzI18n(en_US),
-   provideZoneChangeDetection({ eventCoalescing: true }),
+   provideZoneChangeDetection({ eventCoalescing: false }),
    provideRouter(routes),
    iconsProvider,
    provideAnimations(),
@@ -1189,7 +1337,7 @@ EOF
 EOF
 )
    info "Creating icons-provider.ts file ..."
-   echo "$ICONS_PROVIDER_FILE_CONTENT" > src/app/icons-provider.ts
+    echo "$ICONS_PROVIDER_FILE_CONTENT" > src/app/icons-provider.ts
 
    info "Creating config.json file in 'public/assets' folder ..."
     mkdir -p public/assets
@@ -1293,6 +1441,7 @@ import { todoFormlyFields } from './todo.formly';
 import { Todo } from './state/todo.model';
 import { TodoService } from './state/todo.service';
 import { firstValueFrom } from 'rxjs';
+import { TodoCommunicationService } from '../../core/services/todo-communication.service'; // Import
 
 @Component({
    selector: 'todo-modal',
@@ -1311,6 +1460,7 @@ export class TodoModalComponent implements OnInit {
    readonly data: { todo: Todo } = inject(NZ_MODAL_DATA);
    private modal: NzModalRef = inject(NzModalRef);
    private todoService = inject(TodoService);
+   private todoCommunicationService = inject(TodoCommunicationService);
 
    form = new FormGroup({});
    model: Partial<Todo> = {};
@@ -1323,7 +1473,8 @@ export class TodoModalComponent implements OnInit {
    async onSubmit() {
        if (this.form.valid) {
            try {
-               await firstValueFrom(this.todoService.updateTodo(this.model.id!, this.model));
+               const updatedTodo = await firstValueFrom(this.todoService.updateTodo(this.model.id!, this.model));
+                this.todoCommunicationService.todoUpdated(updatedTodo);
                this.modal.close();
            } catch (error) {
                console.error('Error saving todo:', error);
