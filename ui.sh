@@ -159,7 +159,7 @@ export interface Todo {
   userId: string;
   title: string;
   description: string;
-  dueDate: Date;
+  dueDate: Date | string;
   status: 'pending' | 'completed';
   createdAt: string;
   updatedAt: string;
@@ -167,7 +167,7 @@ export interface Todo {
 }
 
 export type CreateTodoDto = Omit<Todo, 'id' | 'userId' | 'createdAt' | 'updatedAt' | 'ttl'>;
-export type UpdateTodoDto = Partial<CreateTodoDto>;
+export type UpdateTodoDto = Partial<Todo>;
 EOF
 )
   echo "$TODO_MODEL_CONTENT" > "$TODO_COMPONENTS_DIRECTORY/state/todo.model.ts"
@@ -248,57 +248,11 @@ EOF
 )
     echo "$TODO_ROUTES_CONTENT" > "$TODO_COMPONENTS_DIRECTORY/todo.routes.ts"
 }
-
 function create_todo_list_component() {
-  local TODO_COMPONENTS_DIRECTORY=$1
-
-      # Create template file
-    local TODO_LIST_TEMPLATE=$(cat <<EOF
-<div class="container mx-auto p-4">
-  <h1 class="text-2xl font-bold mb-4">Todos</h1>
-
-    <div class="mb-4">
-        <button nz-button nzType="primary" (click)="addTodo()">Add Todo</button>
-    </div>
-
-  <!-- Todo List -->
-  <nz-list [nzDataSource]="todos()" [nzRenderItem]="todoTemplate">
-    <ng-template #todoTemplate let-todo>
-      <nz-list-item>
-        <div class="flex w-full items-center gap-2">
-          <label nz-checkbox
-            [ngModel]="todo.status === 'completed'"
-            (ngModelChange)="toggleTodo(todo)"
-          >
-            <span [class.line-through]="todo.status === 'completed'">
-              {{ todo.title }}
-            </span>
-          </label>
-            <button nz-button nzType="text" (click)="editTodo(todo)">
-                <span nz-icon nzType="edit"></span>
-            </button>
-          <button
-            nz-button
-            nzType="text"
-            nzDanger
-            class="ml-auto"
-            (click)="deleteTodo(todo.id)"
-          >
-            <span nz-icon nzType="delete"></span>
-          </button>
-        </div>
-      </nz-list-item>
-    </ng-template>
-  </nz-list>
-    <router-outlet></router-outlet>
-</div>
-EOF
-)
-    echo "$TODO_LIST_TEMPLATE" > "$TODO_COMPONENTS_DIRECTORY/todo-list.component.html"
-    # Create Todo List Component
+    local TODO_COMPONENTS_DIRECTORY=$1
     local TODO_LIST_COMPONENT_CONTENT=$(cat <<'EOF'
-import { Component, inject, signal } from '@angular/core';
-import { CommonModule } from '@angular/common';
+import { Component, inject, signal, OnInit, OnDestroy } from '@angular/core';
+import { CommonModule, DatePipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { NzButtonModule } from 'ng-zorro-antd/button';
 import { NzInputModule } from 'ng-zorro-antd/input';
@@ -310,6 +264,10 @@ import { Todo } from './state/todo.model';
 import { Router, RouterModule } from '@angular/router';
 import { NzModalService, NzModalModule } from 'ng-zorro-antd/modal';
 import { TodoModalComponent } from './todo-modal.component';
+import { TodoCommunicationService } from '../../core/services/todo-communication.service'; // Import
+import { Subscription } from 'rxjs'; // Import Subscription
+import { NzTagModule } from 'ng-zorro-antd/tag'; // Import for the status tags
+import { NzPopconfirmModule } from 'ng-zorro-antd/popconfirm';  // Import pop confirm module
 
 @Component({
   selector: 'todo-list',
@@ -323,42 +281,64 @@ import { TodoModalComponent } from './todo-modal.component';
         NzListModule,
         NzCheckboxModule,
         RouterModule,
-        NzModalModule
+        NzModalModule,
+        NzTagModule,
+        NzPopconfirmModule,
+        DatePipe
     ],
-  templateUrl: './todo-list.component.html'
+  templateUrl: './todo-list.component.html',
+  styleUrls: ['./todo-list.component.less'],
 })
-export class TodoListComponent {
+export class TodoListComponent implements OnInit, OnDestroy {
   private todoService = inject(TodoService);
   private router = inject(Router);
   private modalService = inject(NzModalService);
+    private todoCommunicationService = inject(TodoCommunicationService);
   todos = signal<Todo[]>([]);
   newTodoTitle = '';
+  private todoCreatedSubscription: Subscription | undefined;
+  private todoUpdatedSubscription: Subscription | undefined;
 
   constructor() {
+  }
+
+  ngOnInit() {
     this.loadTodos();
+      this.todoCreatedSubscription = this.todoCommunicationService.todoCreated$.subscribe(todo => {
+        this.addTodoToList(todo);
+      });
+
+      this.todoUpdatedSubscription = this.todoCommunicationService.todoUpdated$.subscribe(todo => {
+           this.updateTodoInList(todo);
+      });
+  }
+
+  ngOnDestroy() {
+    // Unsubscribe to prevent memory leaks
+    this.todoCreatedSubscription?.unsubscribe();
+    this.todoUpdatedSubscription?.unsubscribe();
   }
 
   private loadTodos() {
     this.todoService.getTodos().subscribe(todos => this.todos.set(todos));
   }
 
-    addTodo() {
-        this.router.navigate(['todos', 'add']);
-    }
-
+  addTodo() {
+    this.router.navigate(['todos', 'add']);
+  }
 
   toggleTodo(todo: Todo) {
     const newStatus = todo.status === 'completed' ? 'pending' : 'completed';
     this.todoService.updateTodo(todo.id, { status: newStatus })
-      .subscribe(() => this.loadTodos());
+    .subscribe(() => this.loadTodos());
   }
 
-  editTodo(todo: Todo) { // Pass the whole todo object
+  editTodo(todo: Todo) {
     this.modalService.create({
       nzTitle: 'Edit Todo',
       nzContent: TodoModalComponent,
-      nzData: { todo: todo }, // Pass the todo data to the modal
-      nzOnOk: (componentInstance: TodoModalComponent) => { // Handle the OK button
+      nzData: { todo: todo },
+      nzOnOk: (componentInstance: TodoModalComponent) => {
         return componentInstance.onSubmit();
       },
     });
@@ -368,11 +348,83 @@ export class TodoListComponent {
     this.todoService.deleteTodo(id)
       .subscribe(() => this.loadTodos());
   }
+
+  confirmDelete(id: string): void {
+    this.todoService.deleteTodo(id).subscribe(() => this.loadTodos());
+  }
+
+  cancelDelete(): void {
+    console.log('Delete canceled');
+  }
+
+  addTodoToList(todo: Todo) {
+        this.todos.update(todos => [...todos, todo]);
+    }
+
+    updateTodoInList(updatedTodo: Todo) {
+        this.todos.update(todos => {
+            return todos.map(todo => {
+                if (todo.id === updatedTodo.id) {
+                    return { ...todo, ...updatedTodo };
+                }
+                return todo;
+            });
+        });
+    }
+
 }
 EOF
 )
-
     echo "$TODO_LIST_COMPONENT_CONTENT" > "$TODO_COMPONENTS_DIRECTORY/todo-list.component.ts"
+
+    # Create template file - ADDED HERE
+    local TODO_LIST_TEMPLATE_CONTENT=$(cat <<'EOF'
+<div class="container">
+  <div class="todo-header">
+    <h1>My Todos</h1>
+    <button nz-button nzType="primary" (click)="addTodo()">
+      <span nz-icon nzType="plus" nzTheme="outline"></span>Add Todo
+    </button>
+  </div>
+
+  <nz-list nzItemLayout="vertical">
+    <nz-list-item *ngFor="let todo of todos()" class="todo-item">
+      <div nz-list-item-extra>
+        <a nz-button nzType="primary" nzShape="circle" (click)="editTodo(todo)">
+          <span nz-icon nzType="edit" nzTheme="outline"></span>
+        </a>
+        <nz-popconfirm
+          nzTitle="Are you sure delete this task?"
+          (nzOnConfirm)="confirmDelete(todo.id)"
+          (nzOnCancel)="cancelDelete()"
+        >
+          <a nz-button nzType="primary" nzDanger nzShape="circle" nzPopconfirm>
+            <span nz-icon nzType="delete" nzTheme="outline"></span>
+          </a>
+        </nz-popconfirm>
+      </div>
+      <div nz-list-item-content>
+          <div class='todo-item-content' [class.todo-item-completed]="todo.status === 'completed'">
+            <label nz-checkbox [ngModel]="todo.status === 'completed'" (ngModelChange)="toggleTodo(todo)"></label>
+            <div class="todo-text-content">
+              <div class="todo-title-status">
+                <span class="todo-title">{{ todo.title }}</span>
+                <nz-tag *ngIf="todo.status === 'completed'" nzColor="success">Completed</nz-tag>
+                <nz-tag *ngIf="todo.status === 'pending'" nzColor="warning">Pending</nz-tag>
+              </div>
+              <div class="todo-description-date">
+                <span class="todo-description">{{ todo.description }}</span>
+                <small class="todo-due-date">Due Date: {{ todo.dueDate | date }}</small>
+              </div>
+            </div>
+          </div>
+      </div>
+    </nz-list-item>
+  </nz-list>
+</div>
+EOF
+)
+    echo "$TODO_LIST_TEMPLATE_CONTENT" > "$TODO_COMPONENTS_DIRECTORY/todo-list.component.html"
 }
 
 function create_todo_form_component() {
@@ -404,6 +456,7 @@ import { CommonModule } from '@angular/common';
 import { todoFormlyFields } from './todo.formly';
 import { Todo } from './state/todo.model';
 import { firstValueFrom } from 'rxjs';
+import { TodoCommunicationService } from '../../core/services/todo-communication.service'; // Import
 
 @Component({
   selector: 'todo-form',
@@ -426,6 +479,7 @@ export class TodoFormComponent implements OnInit {
   private todoService = inject(TodoService);
   private router = inject(Router);
   private route = inject(ActivatedRoute);
+  private todoCommunicationService = inject(TodoCommunicationService); // Import
 
   ngOnInit() {
     this.route.data.subscribe(data => {
@@ -450,23 +504,29 @@ export class TodoFormComponent implements OnInit {
   async onSubmit() {
     if (this.form.valid) {
       try {
+        let newTodo: Todo;
         if (this.mode === 'create') {
-          const In1Year = new Date();
-          In1Year.setFullYear(In1Year.getFullYear() + 1);
-          const dueDate = this.model.dueDate || In1Year;
+            const In1Year = new Date();
+            In1Year.setFullYear(In1Year.getFullYear() + 1);
+            const dueDate = this.model.dueDate ? new Date(this.model.dueDate).toISOString() : In1Year.toISOString();
 
-          await firstValueFrom(this.todoService.createTodo(
-            {
-              title: this.model.title || '',
-              description: this.model.description || '',
-              dueDate: dueDate,
-              status: this.model.status || 'pending'
-            }
-          ));
+            // Await creation
+             newTodo = await firstValueFrom(this.todoService.createTodo(
+               {
+                 title: this.model.title || '',
+                 description: this.model.description || '',
+                 dueDate: dueDate, // send as string to api
+                 status: this.model.status || 'pending'
+               }
+             ));
+          this.todoCommunicationService.todoCreated(newTodo); // after create todo created will update the ui.
         } else {
-          await firstValueFrom(this.todoService.updateTodo(this.model.id!, this.model));
+          newTodo = await firstValueFrom(this.todoService.updateTodo(this.model.id!, this.model));
+          this.todoCommunicationService.todoUpdated(newTodo); // after create todo created will update the ui.
         }
-        this.router.navigate(['/todos']);
+
+         // After successful creation or update, navigate back
+         this.router.navigate(['/todos']);
       } catch (error) {
         console.error('Error saving todo:', error);
       }
@@ -773,13 +833,20 @@ function setup_project_directories() {
     local UI_PATH="$1"
     local COMPONENTS_DIRECTORY="$UI_PATH/src/app/components"
     local TODO_COMPONENTS_DIRECTORY="$UI_PATH/src/app/pages/todo"
-
+    local CORE_SERVICE_DIRECTORY="$UI_PATH/src/app/core/services" # Add this line
     info "Creating components directory: $COMPONENTS_DIRECTORY"
     mkdir -p "$COMPONENTS_DIRECTORY"
     if [ $? -ne 0 ]; then
         error "Failed to create components directory: $COMPONENTS_DIRECTORY"
         exit 1
     fi
+
+    info "Creating core services directory: $CORE_SERVICE_DIRECTORY" # Add this line
+    mkdir -p "$CORE_SERVICE_DIRECTORY" # Add this line
+    if [ $? -ne 0 ]; then # Add this line
+        error "Failed to create components directory: $CORE_SERVICE_DIRECTORY" # Add this line
+        exit 1 # Add this line
+    fi # Add this line
 
     info "Creating formly-datepicker directory: $COMPONENTS_DIRECTORY/formly-datepicker"
     mkdir -p "$COMPONENTS_DIRECTORY/formly-datepicker"
@@ -806,12 +873,110 @@ function create_project_components() {
 
 function configure_angular_project() {
     local UI_PATH="$1"
-    local PROJECT_NAME_TITLE="$2"
+    local PROJECT_NAME_TITLE=$2
 
     create_todo_setup "$UI_PATH"
     create_navigation_setup "$UI_PATH" "$PROJECT_NAME_TITLE"
 }
+function create_todo_communication_service() { # Add this function
+ local CORE_SERVICE_DIRECTORY=$1
+ local TODO_COMMUNICATION_SERVICE_CONTENT=$(cat <<'EOF'
+import { Injectable } from '@angular/core';
+import { Subject } from 'rxjs';
+import { Todo } from '../../pages/todo/state/todo.model';
 
+@Injectable({
+  providedIn: 'root'
+})
+export class TodoCommunicationService {
+  private todoCreatedSource = new Subject<Todo>();
+  todoCreated$ = this.todoCreatedSource.asObservable();
+
+  private todoUpdatedSource = new Subject<Todo>();
+  todoUpdated$ = this.todoUpdatedSource.asObservable();
+
+    todoUpdated(todo: Todo) {
+        this.todoUpdatedSource.next(todo);
+    }
+
+    todoCreated(todo: Todo) {
+        this.todoCreatedSource.next(todo);
+    }
+}
+EOF
+)
+
+  echo "$TODO_COMMUNICATION_SERVICE_CONTENT" > "$CORE_SERVICE_DIRECTORY/todo-communication.service.ts"
+}
+function create_todo_less_file() {
+ local TODO_COMPONENTS_DIRECTORY=$1
+ local TODO_LESS_CONTENT=$(cat <<'EOF'
+.todo-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start; /* Align items to the start, especially checkbox and text */
+  padding: 16px;
+  border-bottom: 1px solid #f0f0f0;
+
+  &:last-child {
+    border-bottom: none;
+  }
+
+  .todo-item-content {
+    display: flex;
+    align-items: flex-start; /* Align checkbox and text vertically */
+    gap: 16px; /* Space between checkbox and text content */
+
+    &.todo-item-completed {
+      .todo-title, .todo-description {
+        text-decoration: line-through;
+        color: #777; /* Optional: make completed text a bit lighter */
+      }
+    }
+  }
+
+  .todo-text-content {
+    display: flex;
+    flex-direction: column; /* Stack title/status and description/date vertically */
+    gap: 8px; /* Space between title/status and description/date */
+  }
+
+  .todo-title-status {
+    display: flex;
+    align-items: center; /* Align title and tags horizontally */
+    gap: 10px; /* Space between title and tags */
+  }
+
+  .todo-description-date {
+    display: flex;
+    align-items: center; /* Align description and due date horizontally */
+    gap: 20px; /* Space between description and due date */
+    font-size: 0.9em;
+    color: #777;
+  }
+
+  .todo-title {
+    font-size: 1.2em;
+    font-weight: 500;
+  }
+
+  .todo-description {
+    // Style description if needed
+  }
+
+  .todo-due-date {
+    // Style due date if needed
+  }
+
+  nz-tag {
+    margin-left: 8px;
+  }
+}
+EOF
+)
+
+  echo "$TODO_LESS_CONTENT" > "$TODO_COMPONENTS_DIRECTORY/todo-list.component.less"
+}
 function init() {
     local PROJECT_NAME=${1:-'hq-app'}
     read -e -p "Enter Your Project Folder Name:" -i "$PROJECT_NAME" PROJECT_NAME
@@ -847,82 +1012,81 @@ function init() {
 
     save_exact
     npx ng new "$UI_FOLDER_NAME" --ssr=false --directory ./ --routing --style=less --minimal --skip-tests --skip-git --strict
-    npx ng add @angular-eslint/schematics --skip-confirmation --verbose
-    npx ng add @cypress/schematic --skip-confirmation --e2e --verbose --interactive false
 
-    info "NG setup done. Adding NG Zorro ..."
-    npx ng add ng-zorro-antd@latest --skip-confirmation --verbose \
-      --dynamic-icon \
-      --skip-install \
-      --template "sidemenu" \
-      --theme \
-      --project "$UI_FOLDER_NAME" \
-      --locale "en_US"
+   info "NG setup done. Adding NG Zorro ..."
+   npx ng add ng-zorro-antd@latest --skip-confirmation --verbose \
+     --dynamic-icon \
+     --skip-install \
+     --template "sidemenu" \
+     --theme \
+     --project "$UI_FOLDER_NAME" \
+     --locale "en_US"
 
-    info "NG Zorro setup done. Adding ngx-formly"
-    npx ng add @ngx-formly/schematics@latest --ui-theme=ng-zorro-antd --verbose --skip-confirmation
+   info "NG Zorro setup done. Adding ngx-formly"
+   npx ng add @ngx-formly/schematics@latest --ui-theme=ng-zorro-antd --verbose --skip-confirmation
 
-    npm install @ngx-formly/core @ngx-formly/ng-zorro-antd --verbose --skip-confirmation
+   npm install @ngx-formly/core @ngx-formly/ng-zorro-antd --verbose --skip-confirmation
 
-    setup_project_directories "$UI_PATH"
+   setup_project_directories "$UI_PATH"
 
-    local COMPONENTS_DIRECTORY="$UI_PATH/src/app/components"
-    local TODO_COMPONENTS_DIRECTORY="$UI_PATH/src/app/pages/todo"
-    create_project_components "$COMPONENTS_DIRECTORY" "$TODO_COMPONENTS_DIRECTORY"
+   local COMPONENTS_DIRECTORY="$UI_PATH/src/app/components"
+   local TODO_COMPONENTS_DIRECTORY="$UI_PATH/src/app/pages/todo"
+       local CORE_SERVICE_DIRECTORY="$UI_PATH/src/app/core/services"
 
-    configure_angular_project "$UI_PATH" "$PROJECT_NAME_TITLE"
+   create_project_components "$COMPONENTS_DIRECTORY" "$TODO_COMPONENTS_DIRECTORY"
 
+   configure_angular_project "$UI_PATH" "$PROJECT_NAME_TITLE"
+       create_todo_communication_service "$CORE_SERVICE_DIRECTORY" # Add this line
 
-    local ICONS_PROVIDER_FILE_CONTENT=$(cat <<'EOF'
+   local ICONS_PROVIDER_FILE_CONTENT=$(cat <<'EOF'
 import { IconDefinition } from '@ant-design/icons-angular';
 import { NzIconModule,provideNzIcons } from 'ng-zorro-antd/icon';
 
 import { MenuFoldOutline, MenuUnfoldOutline, FormOutline, DashboardOutline, UnorderedListOutline, DeleteOutline, PlusOutline, EditOutline } from '@ant-design/icons-angular/icons';
 
-const icons: IconDefinition[] = [MenuFoldOutline, MenuUnfoldOutline, DashboardOutline, FormOutline, UnorderedListOutline, DeleteOutline, PlusOutline, EditOutline];
+const icons: IconDefinition[] = [MenuFoldOutline, MenuUnfoldOutline, FormOutline, DashboardOutline, UnorderedListOutline, DeleteOutline, PlusOutline, EditOutline];
 
 export const iconsProvider = provideNzIcons(icons);
 EOF
 )
 
-    local APP_CONFIG_SERVICE_FILE_CONTENT=$(cat <<'EOF'
+   local APP_CONFIG_SERVICE_FILE_CONTENT=$(cat <<'EOF'
 import { Injectable } from '@angular/core';
 import { ConfigModel } from "./app.config";
 @Injectable({
-  providedIn: 'root'
+ providedIn: 'root'
 })
 
 export class AppConfigService {
-  config: ConfigModel;
+ config: ConfigModel;
 
-  setConfig(config: ConfigModel | undefined) {
-    if (config === undefined) {
-      throw new Error('Config is null or undefined');
-    } else {
-      this.config = config;
-    }
-  }
-  getConfig() {
-    return this.config;
-  }
-  constructor() {
-    this.config = {
-      "restApiEndpoint": "http://localhost:8080",
-      "loginUrl": "http://localhost:8080/login",
-      "logoutUrl": "http://localhost:8080/logout",
-      "refreshUrl": "http://localhost:8080/refresh",
-      "tokenUrl": "http://localhost:8080/token",
-      "clientId": "randomClientId"
-    };
-  }
+ setConfig(config: ConfigModel | undefined) {
+   if (config === undefined) {
+     throw new Error('Config is null or undefined');
+   } else {
+     this.config = config;
+   }
+ }
+ getConfig() {
+   return this.config;
+ }
+ constructor() {
+   this.config = {
+     "restApiEndpoint": "http://localhost:8080",
+     "loginUrl": "http://localhost:8080/login",
+     "logoutUrl": "http://localhost:8080/logout",
+     "refreshUrl": "http://localhost:8080/refresh",
+     "tokenUrl": "http://localhost:8080/token",
+     "clientId": "randomClientId"
+   };
+ }
 }
 EOF
-
 )
-    info "Creating app.config.service.ts file ..."
-    echo "$APP_CONFIG_SERVICE_FILE_CONTENT" > src/app/app.config.service.ts
+   info "Creating app.config.service.ts file ..."
+   echo "$APP_CONFIG_SERVICE_FILE_CONTENT" > src/app/app.config.service.ts
 
-    local APP_CONFIG_FILE_CONTENT=$(cat <<'EOF'
+   local APP_CONFIG_FILE_CONTENT=$(cat <<'EOF'
 import { provideAnimations } from "@angular/platform-browser/animations";
 import { HttpClient, provideHttpClient} from "@angular/common/http";
 
@@ -944,180 +1108,180 @@ import { NzDatePickerModule } from 'ng-zorro-antd/date-picker';
 import { FormlyFieldNzDatepicker } from './components/formly-datepicker/formly-field-nz-datepicker.component';
 
 export interface ConfigModel {
-  restApiEndpoint: string;
-  loginUrl: string;
-  logoutUrl: string;
-  refreshUrl: string;
-  tokenUrl: string;
-  clientId: string;
+ restApiEndpoint: string;
+ loginUrl: string;
+ logoutUrl: string;
+ refreshUrl: string;
+ tokenUrl: string;
+ clientId: string;
 }
 
 export function initializeApp(http: HttpClient, configService: AppConfigService) {
-  return async () => {
-    const configPath = 'assets/config.json';
-    await http.get<ConfigModel>(configPath).toPromise().then(
-      response => {
-        configService.setConfig(response);
-      },
-      error => {
-        const errorMessage = `Failed to load the app config from ${configPath}.
-          Please create ${configPath} and make sure it contains the app config.
-          The app config should be a JSON file with the following structure:
-          {
-            "restApiEndpoint": "http://localhost:8080",
-            "loginUrl": "http://localhost:8080/login",
-            "logoutUrl": "http://localhost:8080/logout",
-            "refreshUrl": "http://localhost:8080/refresh",
-            "tokenUrl": "http://localhost:8080/token",
-            "clientId": "randomClientId"
-          }
-            `;
-        console.error('Failed to load the app config', error);
-        throw new Error(errorMessage);
-      }
-    );
-  };
+ return async () => {
+   const configPath = 'assets/config.json';
+   await http.get<ConfigModel>(configPath).toPromise().then(
+     response => {
+       configService.setConfig(response);
+     },
+     error => {
+       const errorMessage = `Failed to load the app config from ${configPath}.
+         Please create ${configPath} and make sure it contains the app config.
+         The app config should be a JSON file with the following structure:
+         {
+           "restApiEndpoint": "http://localhost:8080",
+           "loginUrl": "http://localhost:8080/login",
+           "logoutUrl": "http://localhost:8080/logout",
+           "refreshUrl": "http://localhost:8080/refresh",
+           "tokenUrl": "http://localhost:8080/token",
+           "clientId": "randomClientId"
+         }
+           `;
+       console.error('Failed to load the app config', error);
+       throw new Error(errorMessage);
+     }
+   );
+ };
 }
 export const appConfig: ApplicationConfig = {
-  providers: [
-    provideNzI18n(en_US),
-    provideZoneChangeDetection({ eventCoalescing: true }),
-    provideRouter(routes),
-    iconsProvider,
-    provideAnimations(),
-    provideHttpClient(),
-    AppConfigService, {
-      provide: APP_INITIALIZER,
-      useFactory: initializeApp,
-      multi: true,
-      deps: [HttpClient, AppConfigService],
-    },
-    importProvidersFrom(
-      FormlyModule.forRoot({
-        validationMessages: [{ name: 'required', message: 'This field is required' }],
-        types: [
-          {
-            name: 'datepicker',
-            component: FormlyFieldNzDatepicker,
-            wrappers: ['form-field'],
-          },
-        ],
-      }),
-      FormlyNgZorroAntdModule,
-      NzDatePickerModule,
-    )
-  ],
+ providers: [
+   provideNzI18n(en_US),
+   provideZoneChangeDetection({ eventCoalescing: true }),
+   provideRouter(routes),
+   iconsProvider,
+   provideAnimations(),
+   provideHttpClient(),
+   AppConfigService, {
+     provide: APP_INITIALIZER,
+     useFactory: initializeApp,
+     multi: true,
+     deps: [HttpClient, AppConfigService],
+   },
+   importProvidersFrom(
+     FormlyModule.forRoot({
+       validationMessages: [{ name: 'required', message: 'This field is required' }],
+       types: [
+         {
+           name: 'datepicker',
+           component: FormlyFieldNzDatepicker,
+           wrappers: ['form-field'],
+         },
+       ],
+     }),
+     FormlyNgZorroAntdModule,
+     NzDatePickerModule,
+   )
+ ],
 };
-
 EOF
 )
-    info "Creating app.config.ts file ..."
-    echo "$APP_CONFIG_FILE_CONTENT" > src/app/app.config.ts
+   info "Creating app.config.ts file ..."
+   echo "$APP_CONFIG_FILE_CONTENT" > src/app/app.config.ts
 
-    local CONFIG_JSON_CONTENT=$(cat <<'EOF'
+   local CONFIG_JSON_CONTENT=$(cat <<'EOF'
 {
-  "restApiEndpoint": "http://localhost:3000",
-  "loginUrl": "http://localhost:3000/login",
-  "logoutUrl": "http://localhost:3000/logout",
-  "refreshUrl": "http://localhost:3000/refresh",
-  "tokenUrl": "http://localhost:8080/token",
-  "clientId": "randomClientId"
+ "restApiEndpoint": "http://localhost:3000",
+ "loginUrl": "http://localhost:3000/login",
+ "logoutUrl": "http://localhost:3000/logout",
+ "refreshUrl": "http://localhost:3000/refresh",
+ "tokenUrl": "http://localhost:8080/token",
+ "clientId": "randomClientId"
 }
 EOF
 )
-    info "Creating icons-provider.ts file ..."
-    echo "$ICONS_PROVIDER_FILE_CONTENT" > src/app/icons-provider.ts
+   info "Creating icons-provider.ts file ..."
+   echo "$ICONS_PROVIDER_FILE_CONTENT" > src/app/icons-provider.ts
 
-    info "Creating config.json file in 'public/assets' folder ..."
-     mkdir -p public/assets
-    echo "$CONFIG_JSON_CONTENT" > public/assets/config.json
+   info "Creating config.json file in 'public/assets' folder ..."
+    mkdir -p public/assets
+   echo "$CONFIG_JSON_CONTENT" > public/assets/config.json
 
-    # replace text 'Ant Design Of Angular' with $PROJECT_NAME
-    echo "Replacing 'Ant Design Of Angular' with '$PROJECT_NAME_TITLE' ..."
-    #  sed -i '' -e "s/Ant Design Of Angular/$PROJECT_NAME_TITLE/ig" src/app/app.component.html
+   # Add new todo style (replace with new template)
+       info "creating new todo style..."
+       create_todo_less_file "$TODO_COMPONENTS_DIRECTORY"
+       #  sed -i '' -e "s/Ant Design Of Angular/$PROJECT_NAME_TITLE/ig" src/app/app.component.html
 
-    info "Replacing <title> in src/index.html ..."
-    sed -i '' -e "s/<title>Ui<\/title>/<title>$PROJECT_NAME_TITLE<\/title>/ig" src/index.html
+   info "Replacing <title> in src/index.html ..."
+   sed -i '' -e "s/<title>Ui<\/title>/<title>$PROJECT_NAME_TITLE<\/title>/ig" src/index.html
 
-    local STYLESS_DOT_LESS_FILE_CONTENT=$(cat <<'EOF'
+   local STYLESS_DOT_LESS_FILE_CONTENT=$(cat <<'EOF'
 /* You can add global styles to this file, and also import other style files */
 @import "ng-zorro-antd/ng-zorro-antd.less";
 
 nz-layout.ant-layout.app-layout {
-  height: auto;
-  min-height: 100vh;
+ height: auto;
+ min-height: 100vh;
 }
 EOF
 )
 
-    info "Creating TODO components ..."
-    create_todo_setup "$UI_PATH"
+   info "Creating TODO components ..."
+   create_todo_setup "$UI_PATH"
 
-    info "Creating navigation setup ..."
-    create_navigation_setup "$UI_PATH" "$PROJECT_NAME_TITLE"
+   info "Creating navigation setup ..."
+   create_navigation_setup "$UI_PATH" "$PROJECT_NAME_TITLE"
 
-    info "Creating styles.less file ..."
-    echo "$STYLESS_DOT_LESS_FILE_CONTENT" > src/styles.less
+   info "Creating styles.less file ..."
+   echo "$STYLESS_DOT_LESS_FILE_CONTENT" > src/styles.less
 
-    popd
+   popd
 
-    success "✔ All done. Starting ui server from the folder of '$PROJECT_NAME/$UI_FOLDER_NAME' ...\n"
-    start "$CURRENT_DIRECTORY/$PROJECT_NAME/$UI_FOLDER_NAME"
+   success "✔ All done. Starting ui server from the folder of '$PROJECT_NAME/$UI_FOLDER_NAME' ...\n"
+   start "$CURRENT_DIRECTORY/$PROJECT_NAME/$UI_FOLDER_NAME"
 }
 
 function generate_page() {
- local PAGE_NAME=$1
- local PROJECT_PATH="$UI_PATH"
- # Generate the module and routing module with standalone flag
- npx ng g m "pages/$PAGE_NAME" --routing --route "$PAGE_NAME" --module app.module --standalone
+local PAGE_NAME=$1
+local PROJECT_PATH="$UI_PATH"
+# Generate the module and routing module with standalone flag
+npx ng g m "pages/$PAGE_NAME" --routing --route "$PAGE_NAME" --module app.module --standalone
 
- # Generate component inside pages/$PAGE_NAME
- npx ng g c "pages/$PAGE_NAME" --standalone --inline-template --skip-tests --inline-style
+# Generate component inside pages/$PAGE_NAME
+npx ng g c "pages/$PAGE_NAME" --standalone --inline-template --skip-tests --inline-style
 }
 
 function help() {
- echo "Usage: $0 <command> [options]"
- echo "Commands:"
- echo "  init [project-name] [ui-folder-name]  Initialize a new Angular project"
- echo "  generate-page <page-name>              Generate a new page"
- echo "  start                                   Start the Angular app"
- echo "  destroy <project-name>                 Destroy the project"
- echo "  help                                  Show this help message"
+echo "Usage: $0 <command> [options]"
+echo "Commands:"
+echo "  init [project-name] [ui-folder-name]  Initialize a new Angular project"
+echo "  generate-page <page-name>              Generate a new page"
+echo "  start                                   Start the Angular app"
+echo "  destroy <project-name>                 Destroy the project"
+echo "  help                                  Show this help message"
 }
 
 function start() {
- # TODO: add an option to start it as docker or not.
- local DIRECTORY=$1
- local PROJECT_ROOT=$(dirname "$DIRECTORY")
+# TODO: add an option to start it as docker or not.
+local DIRECTORY=$1
+local PROJECT_ROOT=$(dirname "$DIRECTORY")
 
- # Start JSON Server in background
- pushd "$PROJECT_ROOT/fake-json-server" >/dev/null
- npx json-server db.json &
- popd >/dev/null
+# Start JSON Server in background
+pushd "$PROJECT_ROOT/fake-json-server" >/dev/null
+npx json-server db.json &
+popd >/dev/null
 
- # Start Angular app
- pushd "$DIRECTORY" >/dev/null
- npx ng serve --verbose --open
- popd >/dev/null
+# Start Angular app
+pushd "$DIRECTORY" >/dev/null
+npx ng serve --verbose --open
+popd >/dev/null
 }
 
 function create_todo_modal_component() {
-    local TODO_COMPONENTS_DIRECTORY=$1
+   local TODO_COMPONENTS_DIRECTORY=$1
 
-      # Create template file
-    local TODO_MODAL_TEMPLATE=$(cat <<EOF
+     # Create template file
+   local TODO_MODAL_TEMPLATE=$(cat <<'EOF'
 <form [formGroup]="form" (ngSubmit)="onSubmit()" nz-form>
-    <formly-form [form]="form" [fields]="fields" [model]="model"></formly-form>
-    <div class="flex gap-2 justify-end">
-        <button nz-button (click)="cancel()">Cancel</button>
-        <button nz-button nzType="primary" type="submit" [disabled]="!form.valid">Save</button>
-    </div>
+   <formly-form [form]="form" [fields]="fields" [model]="model"></formly-form>
+   <div class="flex gap-2 justify-end">
+       <button nz-button (click)="cancel()">Cancel</button>
+       <button nz-button nzType="primary" type="submit" [disabled]="!form.valid">Save</button>
+   </div>
 </form>
 EOF
 )
-    echo "$TODO_MODAL_TEMPLATE" > "$TODO_COMPONENTS_DIRECTORY/todo-modal.component.html"
+   echo "$TODO_MODAL_TEMPLATE" > "$TODO_COMPONENTS_DIRECTORY/todo-modal.component.html"
 
-        local TODO_MODAL_COMPONENT_CONTENT=$(cat <<'EOF'
+       local TODO_MODAL_COMPONENT_CONTENT=$(cat <<'EOF'
 import { Component, inject, OnInit } from '@angular/core';
 import { FormGroup, ReactiveFormsModule } from '@angular/forms';
 import { FormlyFieldConfig, FormlyModule } from '@ngx-formly/core';
@@ -1131,55 +1295,55 @@ import { TodoService } from './state/todo.service';
 import { firstValueFrom } from 'rxjs';
 
 @Component({
-    selector: 'todo-modal',
-    standalone: true,
-    imports: [
-        CommonModule,
-        ReactiveFormsModule,
-        FormlyModule,
-        NzFormModule,
-        NzButtonModule,
-        NzModalModule
-    ],
-    templateUrl: './todo-modal.component.html'
+   selector: 'todo-modal',
+   standalone: true,
+   imports: [
+       CommonModule,
+       ReactiveFormsModule,
+       FormlyModule,
+       NzFormModule,
+       NzButtonModule,
+       NzModalModule
+   ],
+   templateUrl: './todo-modal.component.html'
 })
 export class TodoModalComponent implements OnInit {
-    readonly data: { todo: Todo } = inject(NZ_MODAL_DATA);
-    private modal: NzModalRef = inject(NzModalRef);
-    private todoService = inject(TodoService);
+   readonly data: { todo: Todo } = inject(NZ_MODAL_DATA);
+   private modal: NzModalRef = inject(NzModalRef);
+   private todoService = inject(TodoService);
 
-    form = new FormGroup({});
-    model: Partial<Todo> = {};
-    fields: FormlyFieldConfig[] = todoFormlyFields;
+   form = new FormGroup({});
+   model: Partial<Todo> = {};
+   fields: FormlyFieldConfig[] = todoFormlyFields;
 
-    ngOnInit() {
-        this.model = { ...this.data.todo, dueDate: new Date(this.data.todo.dueDate) };
-    }
+   ngOnInit() {
+       this.model = { ...this.data.todo, dueDate: new Date(this.data.todo.dueDate) };
+   }
 
-    async onSubmit() {
-        if (this.form.valid) {
-            try {
-                await firstValueFrom(this.todoService.updateTodo(this.model.id!, this.model));
-                this.modal.close();
-            } catch (error) {
-                console.error('Error saving todo:', error);
-            }
-        }
-    }
+   async onSubmit() {
+       if (this.form.valid) {
+           try {
+               await firstValueFrom(this.todoService.updateTodo(this.model.id!, this.model));
+               this.modal.close();
+           } catch (error) {
+               console.error('Error saving todo:', error);
+           }
+       }
+   }
 
-    cancel() {
-        this.modal.destroy();
-    }
+   cancel() {
+       this.modal.destroy();
+   }
 }
 EOF
 )
-    echo "$TODO_MODAL_COMPONENT_CONTENT" > "$TODO_COMPONENTS_DIRECTORY/todo-modal.component.ts"
+   echo "$TODO_MODAL_COMPONENT_CONTENT" > "$TODO_COMPONENTS_DIRECTORY/todo-modal.component.ts"
 }
 
 function create_formly_datepicker_component() {
-    local COMPONENTS_DIRECTORY=$1
+   local COMPONENTS_DIRECTORY=$1
 
-    local FORMLY_DATEPICKER_COMPONENT_CONTENT=$(cat <<'EOF'
+   local FORMLY_DATEPICKER_COMPONENT_CONTENT=$(cat <<'EOF'
 import { Component } from '@angular/core';
 import { FieldType, FieldTypeConfig } from '@ngx-formly/core';
 import { NzDatePickerModule } from 'ng-zorro-antd/date-picker';
@@ -1187,59 +1351,59 @@ import { ReactiveFormsModule } from '@angular/forms';
 import { CommonModule } from '@angular/common';
 
 interface DatePickerFieldProps {
-  placeholder?: string;
-  disabled?: boolean;
-  nzFormat?: string;
+ placeholder?: string;
+ disabled?: boolean;
+ nzFormat?: string;
 }
 
 type DatePickerFieldConfig = FieldTypeConfig<DatePickerFieldProps>;
 
 @Component({
-  selector: 'formly-field-nz-datepicker',
-  standalone: true,
-  imports: [NzDatePickerModule, ReactiveFormsModule, CommonModule],
-  template: `
-    <nz-date-picker
-      [formControl]="formControl"
-      [nzPlaceHolder]="field.props.placeholder || ''"
-      [nzDisabled]="field.props.disabled || false"
-      [nzFormat]="field.props.nzFormat || ''"
-    >
-    </nz-date-picker>
-  `,
+ selector: 'formly-field-nz-datepicker',
+ standalone: true,
+ imports: [NzDatePickerModule, ReactiveFormsModule, CommonModule],
+ template: `
+   <nz-date-picker
+     [formControl]="formControl"
+     [nzPlaceHolder]="field.props.placeholder || ''"
+     [nzDisabled]="field.props.disabled || false"
+     [nzFormat]="field.props.nzFormat || ''"
+   >
+   </nz-date-picker>
+ `,
 })
 export class FormlyFieldNzDatepicker extends FieldType<DatePickerFieldConfig> {
 
 }
 EOF
 )
-    echo "$FORMLY_DATEPICKER_COMPONENT_CONTENT" > "$COMPONENTS_DIRECTORY/formly-datepicker/formly-field-nz-datepicker.component.ts"
+   echo "$FORMLY_DATEPICKER_COMPONENT_CONTENT" > "$COMPONENTS_DIRECTORY/formly-datepicker/formly-field-nz-datepicker.component.ts"
 }
 
 function main() {
- local COMMAND=$1
- case $COMMAND in
- init)
-   init "${@:2}"
-   ;;
- generate-page)
-   generate_page "${@:2}"
-   ;;
- start)
-   start "${@:2}"
-   ;;
- destroy)
-   destroy "${@:2}"
-   ;;
- help)
-   help
-   ;;
- *)
-   error "Unknown command: $COMMAND"
-   help
-   exit 1
-   ;;
- esac
+local COMMAND=$1
+case $COMMAND in
+init)
+  init "${@:2}"
+  ;;
+generate-page)
+  generate_page "${@:2}"
+  ;;
+start)
+  start "${@:2}"
+  ;;
+destroy)
+  destroy "${@:2}"
+  ;;
+help)
+  help
+  ;;
+*)
+  error "Unknown command: $COMMAND"
+  help
+  exit 1
+  ;;
+esac
 }
 
 UI_PATH="$CURRENT_DIRECTORY/$PROJECT_NAME/$UI_FOLDER_NAME"
