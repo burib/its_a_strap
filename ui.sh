@@ -2,6 +2,34 @@
 printf "Bash version: %s\n" "$BASH_VERSION"
 
 export NG_CLI_ANALYTICS=false
+
+function main() {
+  local COMMAND=$1
+  case $COMMAND in
+  init)
+    init "${@:2}"
+    ;;
+  generate-page)
+    generate_page "${@:2}"
+    ;;
+  start)
+    start "${@:2}"
+    ;;
+  destroy)
+    destroy "${@:2}"
+    ;;
+  help)
+    help
+    ;;
+  *)
+    error "Unknown command: $COMMAND"
+    help
+    exit 1
+    ;;
+  esac
+}
+
+
 # Get the current working directory
 CURRENT_DIRECTORY=$(pwd)
 SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
@@ -96,9 +124,7 @@ function create_fake_json_server() {
 
   # Initialize package.json
   npm init -y
-
-  #    # Install json-server
-  #    npm install --save-exact json-server
+  npm install --save-dev --save-exact json-server@0.17.4
 
   # Create initial db.json with todo-app data
   local DB_JSON_CONTENT=$(cat <<'EOF'
@@ -113,31 +139,10 @@ function create_fake_json_server() {
       "status": "pending",
       "createdAt": "2024-01-15T10:00:00Z",
       "updatedAt": "2024-01-15T10:00:00Z"
-    },
-    {
-      "id": "123e4567-e89c-12d3-a456-426614174000",
-      "userId": "TEST_USER",
-      "title": "Learn NgZorro",
-      "description": "Complete the NgZorro tutorial",
-      "dueDate": "2026-02-01",
-      "status": "pending",
-      "createdAt": "2024-01-15T10:00:00Z",
-      "updatedAt": "2024-01-15T10:00:00Z"
-    },
-    {
-      "id": "123e4567-e89d-12d3-a456-426614174000",
-      "userId": "TEST_USER",
-      "title": "Build an awesome app",
-      "description": "Build an awesome app using Angular and NgZorro",
-      "dueDate": "2026-02-01",
-      "status": "pending",
-      "createdAt": "2024-01-15T10:00:00Z",
-      "updatedAt": "2024-01-15T10:00:00Z"
     }
   ],
   "users": [
-    { "id": "TEST_USER", "name": "Test User", "email": "test.user@example.com" },
-    { "id": 2, "name": "Jane Smith", "email": "jane@example.com" }
+    { "id": "TEST_USER", "name": "Test User", "email": "test.user@example.com" }
   ],
   "profile": {
     "name": "Demo User",
@@ -148,6 +153,117 @@ function create_fake_json_server() {
 EOF
 )
   echo "$DB_JSON_CONTENT" > db.json
+
+  # Create server.js to add custom routes and token simulation
+  local SERVER_JS_CONTENT=$(cat <<'EOF'
+const jsonServer = require('json-server');
+const server = jsonServer.create();
+const router = jsonServer.router('db.json');
+const middlewares = jsonServer.defaults();
+
+server.use(middlewares);
+server.use(jsonServer.bodyParser);
+
+// Function to generate a dummy JWT (for simulation purposes only)
+function generateDummyToken(type) {
+  const payload = {
+    iss: 'https://cognito-idp.us-east-1.amazonaws.com/us-east-1_USER_POOL_ID', // Replace with your issuer
+    aud: 'YOUR_CLIENT_ID', // Replace with your client ID
+    exp: Math.floor(Date.now() / 1000) + (60 * 60), // Token expires in 1 hour
+    token_use: type,
+    email: 'demo@example.com',
+    name: 'Demo User'
+    // Add other claims as needed for your simulation
+  };
+  const header = { alg: 'none' }; // No signature for dummy token
+  const headerEncoded = Buffer.from(JSON.stringify(header)).toString('base64url').replace(/=+$/, '');
+  const payloadEncoded = Buffer.from(JSON.stringify(payload)).toString('base64url').replace(/=+$/, '');
+  return `${headerEncoded}.${payloadEncoded}.`; // No signature part for 'none' algorithm
+}
+
+function format_cookie_date(timestamp) {
+    const date = new Date(timestamp * 1000); // Convert seconds to milliseconds
+    return date.toUTCString();
+}
+
+function create_cookie_header(name, value, expiration) {
+    let cookieString = `${name}=${value}`;
+    cookieString += '; Secure';
+    cookieString += '; HttpOnly';
+    cookieString += '; SameSite=Lax';
+    cookieString += '; Path=/';
+    if (expiration) {
+        cookieString += `; Expires=${format_cookie_date(expiration)}`;
+    }
+    return cookieString;
+}
+
+// Endpoint to simulate login and set cookies
+server.get('/login', (req, res) => {
+  const accessToken = generateDummyToken('access');
+  const idToken = generateDummyToken('id');
+  const refreshToken = 'DUMMY_REFRESH_TOKEN_VALUE';
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const OneMinuteInSeconds = 60;
+  const FiveMinutesInSeconds = OneMinuteInSeconds * 5;
+  const OneHourInSeconds = OneMinuteInSeconds * 60;
+  const expirationSeconds = nowSeconds + OneHourInSeconds;
+
+  const cookies = [
+      create_cookie_header('id_token', idToken, expirationSeconds),
+      create_cookie_header('access_token', accessToken, expirationSeconds),
+      create_cookie_header('refresh_token', refreshToken, expirationSeconds) // Refresh token usually has longer expiry
+  ];
+
+  console.log('Simulated login - setting cookies');
+  res.setHeader('Set-Cookie', cookies);
+  res.redirect('http://localhost:4200'); // redirect to the ui page at localhost:4200
+});
+
+// Endpoint to simulate token refresh
+server.post('/refresh-token', (req, res) => {
+  const refreshToken = req.body.refresh_token; // Expect refresh_token in the request body
+
+  if (!refreshToken) {
+    return res.status(400).json({ error: 'refresh_token is required' });
+  }
+
+  // In a real scenario, you would validate the refresh_token and exchange it with Cognito
+  // For this fake server, we just generate new dummy tokens
+  const newAccessToken = generateDummyToken('access');
+  const newIdToken = generateDummyToken('id');
+  const newRefreshToken = 'DUMMY_NEW_REFRESH_TOKEN'; // In real scenario, generate or get new refresh token
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const expirationSeconds = nowSeconds + (60 * 60); // 1 hour expiration
+
+  const cookies = [
+        create_cookie_header('id_token', newIdToken, expirationSeconds),
+        create_cookie_header('access_token', newAccessToken, expirationSeconds)
+    ];
+
+
+  console.log('Token refresh simulated - setting new access and id tokens cookies');
+  res.setHeader('Set-Cookie', cookies);
+
+  res.json({
+    access_token: newAccessToken,
+    id_token: newIdToken,
+    refresh_token: newRefreshToken,
+    expires_in: 3600 // 1 hour in seconds
+  });
+});
+
+// Use default router
+server.use(router);
+
+const port = 3000; // or any port you prefer
+server.listen(port, () => {
+  console.log('JSON Server with custom routes is running on port ' + port);
+});
+
+EOF
+)
+  echo "$SERVER_JS_CONTENT" > server.js
   popd >/dev/null
 }
 
@@ -765,6 +881,7 @@ export class NavigationService {
   private iconMap: { [key: string]: string } = {
     welcome: 'dashboard',
     todos: 'unordered-list',
+    profile: 'user' // Add profile icon
   };
 
   generateNavItems(routes: Routes): NavItem[] {
@@ -844,6 +961,18 @@ function create_app_component() {
           </ul>
         </li>
       </ng-container>
+      <li nz-menu-item> <!-- Add Profile link here -->
+          <a routerLink="/profile">
+              <span nz-icon nzType="user"></span>
+              <span>Profile</span>
+          </a>
+      </li>
+       <li nz-menu-item>
+           <a routerLink="/auth/logout">
+               <span nz-icon nzType="logout"></span>
+               <span>Logout</span>
+           </a>
+       </li>
      </ul>
   </nz-sider>
   <nz-layout>
@@ -939,6 +1068,14 @@ export const routes: Routes = [
       title: 'Todo List',
       icon: 'unordered-list'
     }
+  },
+  {
+    path: 'profile', // Add profile route
+    loadChildren: () => import('./pages/profile/profile.routes').then(m => m.PROFILE_ROUTES),
+    data: {
+      title: 'Profile',
+      icon: 'user'
+    }
   }
 ];
 EOF
@@ -964,6 +1101,7 @@ function setup_project_directories() {
     local UI_PATH="$1"
     local COMPONENTS_DIRECTORY="$UI_PATH/src/app/components"
     local TODO_COMPONENTS_DIRECTORY="$UI_PATH/src/app/pages/todo"
+    local PROFILE_COMPONENTS_DIRECTORY="$UI_PATH/src/app/pages/profile" # Add profile directory
     local CORE_SERVICE_DIRECTORY="$UI_PATH/src/app/core/services" # Add this line
     info "Creating components directory: $COMPONENTS_DIRECTORY"
     mkdir -p "$COMPONENTS_DIRECTORY"
@@ -992,14 +1130,23 @@ function setup_project_directories() {
         error "Failed to create todo components directory: $TODO_COMPONENTS_DIRECTORY"
         exit 1
     fi
+
+    info "Creating profile components directory: $PROFILE_COMPONENTS_DIRECTORY" # Add profile directory creation
+    mkdir -p "$PROFILE_COMPONENTS_DIRECTORY"
+    if [ $? -ne 0 ]; then
+        error "Failed to create profile components directory: $PROFILE_COMPONENTS_DIRECTORY"
+        exit 1
+    fi
 }
 
 function create_project_components() {
     local COMPONENTS_DIRECTORY="$1"
     local TODO_COMPONENTS_DIRECTORY="$2"
+    local PROFILE_COMPONENTS_DIRECTORY="$3" # Add profile directory
 
     create_formly_datepicker_component "$COMPONENTS_DIRECTORY"
     create_todo_modal_component "$TODO_COMPONENTS_DIRECTORY"
+    create_profile_component "$PROFILE_COMPONENTS_DIRECTORY" # Create profile component
 }
 
 function configure_angular_project() {
@@ -1008,6 +1155,7 @@ function configure_angular_project() {
 
     create_todo_setup "$UI_PATH"
     create_navigation_setup "$UI_PATH" "$PROJECT_NAME_TITLE"
+    create_profile_setup "$UI_PATH" # Add profile setup
 }
 function create_todo_communication_service() { # Add this function
  local CORE_SERVICE_DIRECTORY=$1
@@ -1125,6 +1273,7 @@ EOF
 
   echo "$TODO_LESS_CONTENT" > "$TODO_COMPONENTS_DIRECTORY/todo-list.component.less"
 }
+
 function init() {
     local PROJECT_NAME=${1:-'hq-app'}
     read -e -p "Enter Your Project Folder Name:" -i "$PROJECT_NAME" PROJECT_NAME
@@ -1179,9 +1328,10 @@ function init() {
 
    local COMPONENTS_DIRECTORY="$UI_PATH/src/app/components"
    local TODO_COMPONENTS_DIRECTORY="$UI_PATH/src/app/pages/todo"
+   local PROFILE_COMPONENTS_DIRECTORY="$UI_PATH/src/app/pages/profile" # Add profile directory
        local CORE_SERVICE_DIRECTORY="$UI_PATH/src/app/core/services"
 
-   create_project_components "$COMPONENTS_DIRECTORY" "$TODO_COMPONENTS_DIRECTORY"
+   create_project_components "$COMPONENTS_DIRECTORY" "$TODO_COMPONENTS_DIRECTORY" "$PROFILE_COMPONENTS_DIRECTORY" # Pass profile dir
 
    configure_angular_project "$UI_PATH" "$PROJECT_NAME_TITLE"
        create_todo_communication_service "$CORE_SERVICE_DIRECTORY" # Add this line
@@ -1190,9 +1340,9 @@ function init() {
 import { IconDefinition } from '@ant-design/icons-angular';
 import { NzIconModule,provideNzIcons } from 'ng-zorro-antd/icon';
 
-import { MenuFoldOutline, MenuUnfoldOutline, FormOutline, DashboardOutline, UnorderedListOutline, DeleteOutline, PlusOutline, EditOutline } from '@ant-design/icons-angular/icons';
+import { MenuFoldOutline, MenuUnfoldOutline, FormOutline, DashboardOutline, UnorderedListOutline, DeleteOutline, PlusOutline, EditOutline, UserOutline, LogoutOutline } from '@ant-design/icons-angular/icons'; // Add UserOutline and LogoutOutline
 
-const icons: IconDefinition[] = [MenuFoldOutline, MenuUnfoldOutline, FormOutline, DashboardOutline, UnorderedListOutline, DeleteOutline, PlusOutline, EditOutline];
+const icons: IconDefinition[] = [MenuFoldOutline, MenuUnfoldOutline, FormOutline, DashboardOutline, UnorderedListOutline, DeleteOutline, PlusOutline, EditOutline, UserOutline, LogoutOutline]; // Add UserOutline and LogoutOutline
 
 export const iconsProvider = provideNzIcons(icons);
 EOF
@@ -1220,11 +1370,11 @@ export class AppConfigService {
  }
  constructor() {
    this.config = {
-     "restApiEndpoint": "http://localhost:8080",
-     "loginUrl": "http://localhost:8080/login",
-     "logoutUrl": "http://localhost:8080/logout",
-     "refreshUrl": "http://localhost:8080/refresh",
-     "tokenUrl": "http://localhost:8080/token",
+     "restApiEndpoint": "http://localhost:3000",
+     "loginUrl": "http://localhost:3000/login",
+     "logoutUrl": "http://localhost:3000/logout",
+     "refreshUrl": "http://localhost:3000/refresh",
+     "tokenUrl": "http://localhost:3000/token",
      "clientId": "randomClientId"
    };
  }
@@ -1368,6 +1518,9 @@ EOF
    info "Creating navigation setup ..."
    create_navigation_setup "$UI_PATH" "$PROJECT_NAME_TITLE"
 
+   info "Creating Profile components ..."
+   create_profile_setup "$UI_PATH"
+
    info "Creating styles.less file ..."
    echo "$STYLESS_DOT_LESS_FILE_CONTENT" > src/styles.less
 
@@ -1404,7 +1557,7 @@ local PROJECT_ROOT=$(dirname "$DIRECTORY")
 
 # Start JSON Server in background
 pushd "$PROJECT_ROOT/fake-json-server" >/dev/null
-npx json-server db.json &
+node server.js & # Run server.js instead of json-server directly
 popd >/dev/null
 
 # Start Angular app
@@ -1531,30 +1684,246 @@ EOF
    echo "$FORMLY_DATEPICKER_COMPONENT_CONTENT" > "$COMPONENTS_DIRECTORY/formly-datepicker/formly-field-nz-datepicker.component.ts"
 }
 
-function main() {
-local COMMAND=$1
-case $COMMAND in
-init)
-  init "${@:2}"
-  ;;
-generate-page)
-  generate_page "${@:2}"
-  ;;
-start)
-  start "${@:2}"
-  ;;
-destroy)
-  destroy "${@:2}"
-  ;;
-help)
-  help
-  ;;
-*)
-  error "Unknown command: $COMMAND"
-  help
-  exit 1
-  ;;
-esac
+function create_profile_setup() {
+  local PROJECT_PATH=$1
+  info "Creating Profile related files..."
+
+  # Create Profile directory and its state subdirectory - ADD state directory here
+  local PROFILE_COMPONENTS_DIRECTORY="$PROJECT_PATH/src/app/pages/profile"
+  mkdir -p "$PROFILE_COMPONENTS_DIRECTORY/state" # Create the state subdirectory
+
+  create_profile_component "$PROFILE_COMPONENTS_DIRECTORY"
+  create_profile_routes "$PROFILE_COMPONENTS_DIRECTORY"
+  create_profile_service "$PROFILE_COMPONENTS_DIRECTORY/state" # Pass state directory path
+  create_profile_model "$PROFILE_COMPONENTS_DIRECTORY/state"   # Pass state directory path
+}
+
+function create_profile_component() {
+    local PROFILE_COMPONENTS_DIRECTORY=$1
+    local PROFILE_COMPONENT_CONTENT=$(cat <<'EOF'
+import { Component, OnInit, inject, OnDestroy } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { ProfileService } from './state/profile.service';
+import { Profile } from './state/profile.model';
+import { NzCardModule } from 'ng-zorro-antd/card';
+import { NzAvatarModule } from 'ng-zorro-antd/avatar';
+import { NzButtonModule } from 'ng-zorro-antd/button';
+import { NzModalService, NzModalModule } from 'ng-zorro-antd/modal';
+import { interval, Subscription } from 'rxjs';
+import { takeWhile } from 'rxjs/operators';
+
+@Component({
+  selector: 'app-profile',
+  standalone: true,
+  imports: [
+    CommonModule,
+    NzCardModule,
+    NzAvatarModule,
+    NzButtonModule,
+    NzModalModule
+  ],
+  templateUrl: './profile.component.html',
+  styleUrl: './profile.component.less'
+})
+export class ProfileComponent implements OnInit, OnDestroy {
+  private profileService = inject(ProfileService);
+  private modalService = inject(NzModalService);
+  profile: Profile | null = null;
+  sessionExpiry = 3600; // Example session expiry in seconds (1 hour)
+  expiryTimer: Subscription | undefined;
+  remainingTime: number = this.sessionExpiry;
+  showRefreshPopup = false;
+
+  ngOnInit(): void {
+    this.loadProfile();
+    this.startExpiryTimer();
+  }
+
+  ngOnDestroy(): void {
+    this.stopExpiryTimer();
+  }
+
+  loadProfile(): void {
+    this.profileService.getProfile().subscribe(data => {
+      this.profile = data;
+    });
+  }
+
+  startExpiryTimer(): void {
+    this.expiryTimer = interval(1000)
+      .pipe(takeWhile(() => this.remainingTime > 0 && !this.showRefreshPopup))
+      .subscribe(() => {
+        this.remainingTime--;
+        if (this.remainingTime <= 60 && !this.showRefreshPopup) {
+          this.showRefreshConfirmation();
+        }
+      });
+  }
+
+  stopExpiryTimer(): void {
+    if (this.expiryTimer && !this.expiryTimer.closed) {
+      this.expiryTimer.unsubscribe();
+    }
+  }
+
+  showRefreshConfirmation(): void {
+      this.showRefreshPopup = true;
+      this.stopExpiryTimer(); // Pause the main timer
+
+      this.modalService.confirm({
+        nzTitle: 'Session Expiring Soon',
+        nzContent: `<p>Your session is about to expire in <strong id="countdown">{{ remainingTimeForModal }}</strong> seconds. Do you want to extend your session?</p>`,
+        nzOkText: 'Refresh Session',
+        nzCancelText: 'Logout',
+        nzOnOk: () => {
+          this.refreshSession();
+        },
+        nzOnCancel: () => {
+          // Redirect to logout or handle logout logic
+          console.log('Logout action needed here');
+          this.showRefreshPopup = false; // Ensure popup flag is reset
+        },
+        nzAfterOpen: () => {
+          // Countdown inside the modal
+          let modalCountdown = 60;
+          const modalInterval = interval(1000).pipe(takeWhile(() => modalCountdown >= 0)).subscribe(count => {
+            modalCountdown--;
+            this.remainingTimeForModal = modalCountdown; // Update bindable property
+            if (document.getElementById('countdown')) {
+              document.getElementById('countdown')!.textContent = String(modalCountdown >= 0 ? modalCountdown : 0);
+            }
+            if (modalCountdown < 0) {
+              modalInterval.unsubscribe();
+              this.modalService.closeAll(); // Automatically close modal after countdown
+              console.log('Session expired due to no refresh.');
+              this.showRefreshPopup = false; // Ensure popup flag is reset
+              // Handle automatic logout or session expiry action here
+            }
+          });
+          this.modalCountdownSubscription = modalInterval; // Store for potential cleanup
+        },
+        nzAfterClose: () => {
+          this.showRefreshPopup = false; // Reset popup flag when modal is closed
+          this.startExpiryTimer(); // Restart main timer after modal is closed (regardless of action)
+          if (this.modalCountdownSubscription && !this.modalCountdownSubscription.closed) {
+            this.modalCountdownSubscription.unsubscribe(); // Cleanup modal countdown if it's still running
+          }
+        }
+      } as any);
+  }
+
+  remainingTimeForModal: number = 60; // Bindable property for modal countdown
+  private modalCountdownSubscription: Subscription | undefined;
+
+  refreshSession(): void {
+    this.profileService.refreshToken().subscribe(
+      response => {
+        console.log('Session refreshed successfully', response);
+        this.remainingTime = this.sessionExpiry; // Reset main timer
+        this.startExpiryTimer();
+        this.showRefreshPopup = false; // Reset popup flag
+        this.modalService.closeAll(); // Close the confirmation modal if it's still open  In a real app, you would update tokens in cookies or storage here.
+      },
+      error => {
+        console.error('Failed to refresh session', error);
+        this.showRefreshPopup = false; // Reset popup flag
+        this.modalService.closeAll(); // Close the confirmation modal
+        // Handle refresh failure (e.g., redirect to login)
+      }
+    );
+  }
+}
+EOF
+)
+    echo "$PROFILE_COMPONENT_CONTENT" > "$PROFILE_COMPONENTS_DIRECTORY/profile.component.ts"
+
+    local PROFILE_COMPONENT_TEMPLATE=$(cat <<'EOF'
+<nz-card nzTitle="User Profile" *ngIf="profile">
+  <nz-card-meta
+          nzTitle="{{ profile.name }}"
+          nzDescription="{{ profile.email }}">
+    <nz-avatar nzIcon="user" nzSrc="{{ profile.avatar }}"></nz-avatar>
+  </nz-card-meta>
+  <ng-template nz-card-actions>
+    <button nz-button nzType="primary" (click)="refreshSession()">Refresh Session</button>
+  </ng-template>
+</nz-card>
+EOF
+)
+    echo "$PROFILE_COMPONENT_TEMPLATE" > "$PROFILE_COMPONENTS_DIRECTORY/profile.component.html"
+
+    local PROFILE_COMPONENT_LESS=$(cat <<'EOF'
+/* Add custom styles for profile component here if needed */
+EOF
+)
+    echo "$PROFILE_COMPONENT_LESS" > "$PROFILE_COMPONENTS_DIRECTORY/profile.component.less"
+}
+
+function create_profile_routes() {
+    local PROFILE_COMPONENTS_DIRECTORY=$1
+
+    # Create Profile routes
+    local PROFILE_ROUTES_CONTENT=$(cat <<'EOF'
+import { Routes } from '@angular/router';
+import { ProfileComponent } from './profile.component';
+import { ProfileService } from './state/profile.service';
+
+export const PROFILE_ROUTES: Routes = [
+  {
+    path: '',
+    component: ProfileComponent,
+    providers: [ProfileService]
+  }
+];
+EOF
+)
+    echo "$PROFILE_ROUTES_CONTENT" > "$PROFILE_COMPONENTS_DIRECTORY/profile.routes.ts"
+}
+
+function create_profile_service() {
+  local PROFILE_COMPONENTS_DIRECTORY=$1 # Parameter is path to 'state' directory
+  local PROFILE_SERVICE_CONTENT=$(cat <<'EOF'
+import { Injectable, inject } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import { Observable } from 'rxjs';
+import { Profile } from './profile.model';
+import { AppConfigService } from '../../../app.config.service';
+
+@Injectable({
+  providedIn: 'root'
+})
+export class ProfileService {
+  private http = inject(HttpClient);
+  private config = inject(AppConfigService);
+  private baseUrl = `${this.config.getConfig().restApiEndpoint}`; // Assuming profile endpoint is at root API URL
+
+  getProfile(): Observable<Profile> {
+    return this.http.get<Profile>(`${this.baseUrl}/profile`); // Adjust endpoint if needed
+  }
+
+  refreshToken(): Observable<any> {
+    return this.http.post<any>(`${this.baseUrl}/refresh-token`, { // Adjust endpoint if needed
+      refresh_token: 'DUMMY_REFRESH_TOKEN' // In real app, get from storage
+    });
+  }
+}
+EOF
+)
+  echo "$PROFILE_SERVICE_CONTENT" > "$PROFILE_COMPONENTS_DIRECTORY/profile.service.ts" # Corrected path - no extra /state
+}
+
+function create_profile_model() {
+  local PROFILE_COMPONENTS_DIRECTORY=$1 # Parameter is path to 'state' directory
+  local PROFILE_MODEL_CONTENT=$(cat <<'EOF'
+export interface Profile {
+  name: string;
+  email: string;
+  avatar: string;
+  // Add other profile properties as needed
+}
+EOF
+)
+  echo "$PROFILE_MODEL_CONTENT" > "$PROFILE_COMPONENTS_DIRECTORY/profile.model.ts" # Corrected path - no extra /state
 }
 
 UI_PATH="$CURRENT_DIRECTORY/$PROJECT_NAME/$UI_FOLDER_NAME"
