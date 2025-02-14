@@ -29,7 +29,6 @@ function main() {
   esac
 }
 
-
 # Get the current working directory
 CURRENT_DIRECTORY=$(pwd)
 SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
@@ -139,10 +138,31 @@ function create_fake_json_server() {
       "status": "pending",
       "createdAt": "2024-01-15T10:00:00Z",
       "updatedAt": "2024-01-15T10:00:00Z"
+    },
+    {
+      "id": "123e4567-e89c-12d3-a456-426614174000",
+      "userId": "TEST_USER",
+      "title": "Learn NgZorro",
+      "description": "Complete the NgZorro tutorial",
+      "dueDate": "2026-02-01",
+      "status": "pending",
+      "createdAt": "2024-01-15T10:00:00Z",
+      "updatedAt": "2024-01-15T10:00:00Z"
+    },
+    {
+      "id": "123e4567-e89d-12d3-a456-426614174000",
+      "userId": "TEST_USER",
+      "title": "Build an awesome app",
+      "description": "Build an awesome app using Angular and NgZorro",
+      "dueDate": "2026-02-01",
+      "status": "pending",
+      "createdAt": "2024-01-15T10:00:00Z",
+      "updatedAt": "2024-01-15T10:00:00Z"
     }
   ],
   "users": [
-    { "id": "TEST_USER", "name": "Test User", "email": "test.user@example.com" }
+    { "id": "TEST_USER", "name": "Test User", "email": "test.user@example.com" },
+    { "id": 2, "name": "Jane Smith", "email": "jane@example.com" }
   ],
   "profile": {
     "name": "Demo User",
@@ -164,83 +184,71 @@ const middlewares = jsonServer.defaults();
 server.use(middlewares);
 server.use(jsonServer.bodyParser);
 
-// Function to generate a dummy JWT (for simulation purposes only)
 function generateDummyToken(type) {
   const payload = {
-    iss: 'https://cognito-idp.us-east-1.amazonaws.com/us-east-1_USER_POOL_ID', // Replace with your issuer
-    aud: 'YOUR_CLIENT_ID', // Replace with your client ID
-    exp: Math.floor(Date.now() / 1000) + (60 * 60), // Token expires in 1 hour
+    iss: 'https://cognito-idp.us-east-1.amazonaws.com/us-east-1_USER_POOL_ID',
+    aud: 'YOUR_CLIENT_ID',
+    exp: Math.floor(Date.now() / 1000) + (60 * 60),
     token_use: type,
     email: 'demo@example.com',
     name: 'Demo User'
-    // Add other claims as needed for your simulation
   };
-  const header = { alg: 'none' }; // No signature for dummy token
+  const header = { alg: 'none' };
   const headerEncoded = Buffer.from(JSON.stringify(header)).toString('base64url').replace(/=+$/, '');
   const payloadEncoded = Buffer.from(JSON.stringify(payload)).toString('base64url').replace(/=+$/, '');
-  return `${headerEncoded}.${payloadEncoded}.`; // No signature part for 'none' algorithm
+  return `${headerEncoded}.${payloadEncoded}.`;
 }
 
 function format_cookie_date(timestamp) {
-    const date = new Date(timestamp * 1000); // Convert seconds to milliseconds
+    const date = new Date(timestamp * 1000);
     return date.toUTCString();
 }
 
 function create_cookie_header(name, value, expiration) {
-    let cookieString = `${name}=${value}`;
-    cookieString += '; Secure';
-    cookieString += '; HttpOnly';
-    cookieString += '; SameSite=Lax';
-    cookieString += '; Path=/';
-    if (expiration) {
-        cookieString += `; Expires=${format_cookie_date(expiration)}`;
-    }
+    let cookieString = `${name}=${value};`;
+    cookieString += `Expires=${format_cookie_date(expiration)};`;
+    cookieString += 'Path=/;';
+    cookieString += 'HttpOnly;';
+    cookieString += 'Secure;';
     return cookieString;
 }
 
-// Endpoint to simulate login and set cookies
 server.get('/login', (req, res) => {
   const accessToken = generateDummyToken('access');
   const idToken = generateDummyToken('id');
   const refreshToken = 'DUMMY_REFRESH_TOKEN_VALUE';
   const nowSeconds = Math.floor(Date.now() / 1000);
-  const OneMinuteInSeconds = 60;
-  const FiveMinutesInSeconds = OneMinuteInSeconds * 5;
-  const OneHourInSeconds = OneMinuteInSeconds * 60;
-  const expirationSeconds = nowSeconds + OneHourInSeconds;
+  const expirationSeconds = nowSeconds + (60 * 60);
 
   const cookies = [
-      create_cookie_header('id_token', idToken, expirationSeconds),
-      create_cookie_header('access_token', accessToken, expirationSeconds),
-      create_cookie_header('refresh_token', refreshToken, expirationSeconds) // Refresh token usually has longer expiry
+    create_cookie_header('id_token', idToken, expirationSeconds),
+    create_cookie_header('access_token', accessToken, expirationSeconds),
+    create_cookie_header('refresh_token', refreshToken, expirationSeconds)
   ];
 
   console.log('Simulated login - setting cookies');
   res.setHeader('Set-Cookie', cookies);
-  res.redirect('http://localhost:4200'); // redirect to the ui page at localhost:4200
+  res.redirect('/');
 });
 
-// Endpoint to simulate token refresh
+
 server.post('/refresh-token', (req, res) => {
-  const refreshToken = req.body.refresh_token; // Expect refresh_token in the request body
+  const refreshToken = req.body.refresh_token;
 
   if (!refreshToken) {
     return res.status(400).json({ error: 'refresh_token is required' });
   }
 
-  // In a real scenario, you would validate the refresh_token and exchange it with Cognito
-  // For this fake server, we just generate new dummy tokens
   const newAccessToken = generateDummyToken('access');
   const newIdToken = generateDummyToken('id');
-  const newRefreshToken = 'DUMMY_NEW_REFRESH_TOKEN'; // In real scenario, generate or get new refresh token
+  const newRefreshToken = 'DUMMY_NEW_REFRESH_TOKEN';
   const nowSeconds = Math.floor(Date.now() / 1000);
-  const expirationSeconds = nowSeconds + (60 * 60); // 1 hour expiration
+  const expirationSeconds = nowSeconds + (60 * 60);
 
   const cookies = [
-        create_cookie_header('id_token', newIdToken, expirationSeconds),
-        create_cookie_header('access_token', newAccessToken, expirationSeconds)
-    ];
-
+    create_cookie_header('id_token', newIdToken, expirationSeconds),
+    create_cookie_header('access_token', newAccessToken, expirationSeconds)
+  ];
 
   console.log('Token refresh simulated - setting new access and id tokens cookies');
   res.setHeader('Set-Cookie', cookies);
@@ -249,14 +257,13 @@ server.post('/refresh-token', (req, res) => {
     access_token: newAccessToken,
     id_token: newIdToken,
     refresh_token: newRefreshToken,
-    expires_in: 3600 // 1 hour in seconds
+    expires_in: 3600
   });
 });
 
-// Use default router
 server.use(router);
 
-const port = 3000; // or any port you prefer
+const port = 3000;
 server.listen(port, () => {
   console.log('JSON Server with custom routes is running on port ' + port);
 });
@@ -299,6 +306,7 @@ import { HttpClient } from '@angular/common/http';
 import { Observable, tap } from 'rxjs';
 import { Todo, CreateTodoDto, UpdateTodoDto } from './todo.model';
 import { AppConfigService } from '../../../app.config.service';
+import { Profile } from '../../profile/state/profile.model';
 
 @Injectable({
   providedIn: 'root'
@@ -323,8 +331,7 @@ export class TodoService {
   updateTodo(id: string, updates: UpdateTodoDto): Observable<Todo> {
     return this.http.patch<Todo>(`${this.baseUrl}/${id}`, updates).pipe(
       tap(updatedTodo => {
-        // Now service is also publishing the updated todo after successful update
-        // so component can update in list and no need to recall list.
+        console.log('Updated todo:', updatedTodo);
       })
     );
   }
@@ -387,10 +394,10 @@ import { Todo, UpdateTodoDto } from './state/todo.model';
 import { Router, RouterModule } from '@angular/router';
 import { NzModalService, NzModalModule } from 'ng-zorro-antd/modal';
 import { TodoModalComponent } from './todo-modal.component';
-import { TodoCommunicationService } from '../../core/services/todo-communication.service'; // Import
-import { Subscription } from 'rxjs'; // Import Subscription
-import { NzTagModule } from 'ng-zorro-antd/tag'; // Import for the status tags
-import { NzPopconfirmModule } from 'ng-zorro-antd/popconfirm';  // Import pop confirm module
+import { TodoCommunicationService } from '../../core/services/todo-communication.service';
+import { Subscription } from 'rxjs';
+import { NzTagModule } from 'ng-zorro-antd/tag';
+import { NzPopconfirmModule } from 'ng-zorro-antd/popconfirm';
 import { NzDatePickerModule } from 'ng-zorro-antd/date-picker';
 import { NzFormModule } from 'ng-zorro-antd/form';
 
@@ -410,7 +417,6 @@ import { NzFormModule } from 'ng-zorro-antd/form';
         NzModalModule,
         NzTagModule,
         NzPopconfirmModule,
-        DatePipe,
         ReactiveFormsModule,
         NzDatePickerModule,
         NzFormModule
@@ -431,7 +437,7 @@ export class TodoListComponent implements OnInit, OnDestroy {
   addTodoForm: FormGroup = this.fb.group({
     title: ['', Validators.required],
     description: [''],
-    dueDate: [null] // Add dueDate control
+    dueDate: [null]
   });
 
   constructor() {
@@ -450,12 +456,11 @@ export class TodoListComponent implements OnInit, OnDestroy {
     this.addTodoForm = this.fb.group({
       title: ['', Validators.required],
       description: [''],
-      dueDate: [null] // Add dueDate control
+      dueDate: [null]
     });
   }
 
   ngOnDestroy() {
-    // Unsubscribe to prevent memory leaks
     this.todoCreatedSubscription?.unsubscribe();
     this.todoUpdatedSubscription?.unsubscribe();
   }
@@ -529,9 +534,9 @@ export class TodoListComponent implements OnInit, OnDestroy {
         this.todos.update(todos => {
             return todos.map(todo => {
                 if (todo.id === updatedTodo.id) {
-                    return updatedTodo; // replace with updated todo
+                    return updatedTodo;
                 }
-                return todo; // otherwise return the original todo
+                return todo;
             });
         });
     }
@@ -579,7 +584,7 @@ export class TodoListComponent implements OnInit, OnDestroy {
   private updateTodo(todo: Todo, updates: UpdateTodoDto) {
     this.todoService.updateTodo(todo.id, updates)
         .subscribe(updatedTodo => {
-            this.todoCommunicationService.todoUpdated(updatedTodo); // Now publish updated todo itself
+            this.todoCommunicationService.todoUpdated(updatedTodo);
         });
   }
 }
@@ -703,7 +708,7 @@ import { CommonModule } from '@angular/common';
 import { todoFormlyFields } from './todo.formly';
 import { Todo } from './state/todo.model';
 import { firstValueFrom } from 'rxjs';
-import { TodoCommunicationService } from '../../core/services/todo-communication.service'; // Import
+import { TodoCommunicationService } from '../../core/services/todo-communication.service';
 
 @Component({
   selector: 'todo-form',
@@ -726,7 +731,7 @@ export class TodoFormComponent implements OnInit {
   private todoService = inject(TodoService);
   private router = inject(Router);
   private route = inject(ActivatedRoute);
-  private todoCommunicationService = inject(TodoCommunicationService); // Import
+  private todoCommunicationService = inject(TodoCommunicationService);
 
   ngOnInit() {
     this.route.data.subscribe(data => {
@@ -757,22 +762,20 @@ export class TodoFormComponent implements OnInit {
             In1Year.setFullYear(In1Year.getFullYear() + 1);
             const dueDate = this.model.dueDate ? new Date(this.model.dueDate).toISOString() : In1Year.toISOString();
 
-            // Await creation
              newTodo = await firstValueFrom(this.todoService.createTodo(
                {
                  title: this.model.title || '',
                  description: this.model.description || '',
-                 dueDate: dueDate, // send as string to api
+                 dueDate: dueDate,
                  status: this.model.status || 'pending'
                }
              ));
-          this.todoCommunicationService.todoCreated(newTodo); // after create todo created will update the ui.
+          this.todoCommunicationService.todoCreated(newTodo);
         } else {
           newTodo = await firstValueFrom(this.todoService.updateTodo(this.model.id!, this.model));
-          this.todoCommunicationService.todoUpdated(newTodo); // after create todo created will update the ui.
+          this.todoCommunicationService.todoUpdated(newTodo);
         }
 
-         // After successful creation or update, navigate back
          this.router.navigate(['/todos']);
       } catch (error) {
         console.error('Error saving todo:', error);
@@ -852,12 +855,17 @@ function create_todo_setup() {
   # Create Todo directory and its state subdirectory
   local TODO_COMPONENTS_DIRECTORY="$PROJECT_PATH/src/app/pages/todo"
   mkdir -p "$TODO_COMPONENTS_DIRECTORY/state"
+
   create_todo_model "$TODO_COMPONENTS_DIRECTORY"
   create_todo_service "$TODO_COMPONENTS_DIRECTORY"
+  error "--------"
+  error "THIS SHOULD CREATE THE TODO COMPONENTS"
+  ls -la "$TODO_COMPONENTS_DIRECTORY/state"
+  error "--------"
   create_todo_routes "$TODO_COMPONENTS_DIRECTORY"
   create_todo_list_component "$TODO_COMPONENTS_DIRECTORY"
-    create_todo_form_component "$TODO_COMPONENTS_DIRECTORY"
-    create_todo_formly_file "$TODO_COMPONENTS_DIRECTORY"
+  create_todo_form_component "$TODO_COMPONENTS_DIRECTORY"
+  create_todo_formly_file "$TODO_COMPONENTS_DIRECTORY"
 }
 
 function create_navigation_service() {
@@ -881,11 +889,10 @@ export class NavigationService {
   private iconMap: { [key: string]: string } = {
     welcome: 'dashboard',
     todos: 'unordered-list',
-    profile: 'user' // Add profile icon
+    profile: 'user'
   };
 
   generateNavItems(routes: Routes): NavItem[] {
-    // .filter(route => !route.path?.includes('**')) Filter out wildcard routes
     return routes
       .filter(route => !route.path?.includes('**'))
       .map(route => this.createNavItem(route))
@@ -981,7 +988,10 @@ function create_app_component() {
         <span class="header-trigger" (click)="isCollapsed = !isCollapsed">
           <span nz-icon [nzType]="isCollapsed ? 'menu-unfold' : 'menu-fold'"></span>
         </span>
-      </div>
+       <div class="app-header-right">  <!-- Container for right-side header content -->
+         <app-profile class="header-profile"></app-profile> <!-- Profile Component -->
+       </div>
+     </div>
     </nz-header>
     <nz-content>
       <div class="inner-content">
@@ -1004,6 +1014,7 @@ import { NzMenuModule } from 'ng-zorro-antd/menu';
 import { NzIconModule } from 'ng-zorro-antd/icon';
 import { NavigationService, NavItem } from './core/navigation/navigation.service';
 import { routes } from './app.routes';
+import { ProfileComponent } from './pages/profile/profile.component';
 
 @Component({
   selector: 'app-root',
@@ -1013,7 +1024,8 @@ import { routes } from './app.routes';
     RouterModule,
     NzLayoutModule,
     NzMenuModule,
-    NzIconModule
+    NzIconModule,
+    ProfileComponent
   ],
   templateUrl: './app.component.html',
   styleUrl: './app.component.less'
@@ -1070,7 +1082,7 @@ export const routes: Routes = [
     }
   },
   {
-    path: 'profile', // Add profile route
+    path: 'profile',
     loadChildren: () => import('./pages/profile/profile.routes').then(m => m.PROFILE_ROUTES),
     data: {
       title: 'Profile',
@@ -1251,7 +1263,6 @@ function create_todo_less_file() {
   }
 
   .todo-description {
-    // Style description if needed
     color: #777;
     font-size: 0.9em;
 
@@ -1261,7 +1272,6 @@ function create_todo_less_file() {
   }
 
   .todo-due-date {
-    // Style due date if needed
   }
 
   nz-tag {
@@ -1340,9 +1350,9 @@ function init() {
 import { IconDefinition } from '@ant-design/icons-angular';
 import { NzIconModule,provideNzIcons } from 'ng-zorro-antd/icon';
 
-import { MenuFoldOutline, MenuUnfoldOutline, FormOutline, DashboardOutline, UnorderedListOutline, DeleteOutline, PlusOutline, EditOutline, UserOutline, LogoutOutline } from '@ant-design/icons-angular/icons'; // Add UserOutline and LogoutOutline
+import { MenuFoldOutline, MenuUnfoldOutline, FormOutline, DashboardOutline, UnorderedListOutline, DeleteOutline, PlusOutline, EditOutline, UserOutline, LogoutOutline } from '@ant-design/icons-angular/icons';
 
-const icons: IconDefinition[] = [MenuFoldOutline, MenuUnfoldOutline, FormOutline, DashboardOutline, UnorderedListOutline, DeleteOutline, PlusOutline, EditOutline, UserOutline, LogoutOutline]; // Add UserOutline and LogoutOutline
+const icons: IconDefinition[] = [MenuFoldOutline, MenuUnfoldOutline, FormOutline, DashboardOutline, UnorderedListOutline, DeleteOutline, PlusOutline, EditOutline, UserOutline, LogoutOutline];
 
 export const iconsProvider = provideNzIcons(icons);
 EOF
@@ -1473,7 +1483,7 @@ export const appConfig: ApplicationConfig = {
 EOF
 )
    info "Creating app.config.ts file ..."
-   echo "$APP_CONFIG_FILE_CONTENT" > src/app/app.config.ts
+    echo "$APP_CONFIG_FILE_CONTENT" > src/app/app.config.ts
 
    local CONFIG_JSON_CONTENT=$(cat <<'EOF'
 {
@@ -1509,6 +1519,30 @@ nz-layout.ant-layout.app-layout {
  height: auto;
  min-height: 100vh;
 }
+
+.app-header {
+ display: flex;           /* Enable Flexbox for header */
+ justify-content: space-between; /* Space out trigger and right content */
+ align-items: center;     /* Vertically align items in header */
+ padding: 0 24px;        /* Add some padding */
+ height: 100%;
+}
+
+.app-header .header-trigger {
+ padding: 0 20px 24px !important;
+}
+
+.app-header-right {
+ display: flex;         /* Enable Flexbox for right-side content */
+ align-items: center;   /* Vertically align items in right side */
+ gap: 16px;             /* Space between items on the right (if you add more later) */
+}
+
+.header-profile {
+ /* Add any specific styling for the profile component in the header here */
+}
+
+
 EOF
 )
 
@@ -1532,7 +1566,12 @@ EOF
 
 function generate_page() {
 local PAGE_NAME=$1
-local PROJECT_PATH="$UI_PATH"
+# Re-calculate PROJECT_PATH and UI_PATH here, as UI_PATH is not globally available
+local PROJECT_NAME=$(basename "$(dirname "$(dirname "$0")")") # Assuming script is in a subfolder of project root
+local PROJECT_PATH="$CURRENT_DIRECTORY/$PROJECT_NAME"
+local UI_FOLDER_NAME='ui' # Assuming 'ui' is the folder name, adjust if needed. Or pass it as argument if needed.
+local UI_PATH="$PROJECT_PATH/$UI_FOLDER_NAME"
+
 # Generate the module and routing module with standalone flag
 npx ng g m "pages/$PAGE_NAME" --routing --route "$PAGE_NAME" --module app.module --standalone
 
@@ -1594,60 +1633,60 @@ import { todoFormlyFields } from './todo.formly';
 import { Todo } from './state/todo.model';
 import { TodoService } from './state/todo.service';
 import { firstValueFrom } from 'rxjs';
-import { TodoCommunicationService } from '../../core/services/todo-communication.service'; // Import
+import { TodoCommunicationService } from '../../core/services/todo-communication.service';
 
 @Component({
-   selector: 'todo-modal',
-   standalone: true,
-   imports: [
-       CommonModule,
-       ReactiveFormsModule,
-       FormlyModule,
-       NzFormModule,
-       NzButtonModule,
-       NzModalModule
-   ],
-   templateUrl: './todo-modal.component.html'
+  selector: 'todo-modal',
+  standalone: true,
+  imports: [
+      CommonModule,
+      ReactiveFormsModule,
+      FormlyModule,
+      NzFormModule,
+      NzButtonModule,
+      NzModalModule
+  ],
+  templateUrl: './todo-modal.component.html'
 })
 export class TodoModalComponent implements OnInit {
-   readonly data: { todo: Todo } = inject(NZ_MODAL_DATA);
-   private modal: NzModalRef = inject(NzModalRef);
-   private todoService = inject(TodoService);
-   private todoCommunicationService = inject(TodoCommunicationService);
+  readonly data: { todo: Todo } = inject(NZ_MODAL_DATA);
+  private modal: NzModalRef = inject(NzModalRef);
+  private todoService = inject(TodoService);
+  private todoCommunicationService = inject(TodoCommunicationService);
 
-   form = new FormGroup({});
-   model: Partial<Todo> = {};
-   fields: FormlyFieldConfig[] = todoFormlyFields;
+  form = new FormGroup({});
+  model: Partial<Todo> = {};
+  fields: FormlyFieldConfig[] = todoFormlyFields;
 
-   ngOnInit() {
-       this.model = { ...this.data.todo, dueDate: new Date(this.data.todo.dueDate) };
-   }
+  ngOnInit() {
+      this.model = { ...this.data.todo, dueDate: new Date(this.data.todo.dueDate) };
+  }
 
-   async onSubmit() {
-       if (this.form.valid) {
-           try {
-               const updatedTodo = await firstValueFrom(this.todoService.updateTodo(this.model.id!, this.model));
-                this.todoCommunicationService.todoUpdated(updatedTodo);
-               this.modal.close();
-           } catch (error) {
-               console.error('Error saving todo:', error);
-           }
-       }
-   }
+  async onSubmit() {
+      if (this.form.valid) {
+          try {
+              const updatedTodo = await firstValueFrom(this.todoService.updateTodo(this.model.id!, this.model));
+               this.todoCommunicationService.todoUpdated(updatedTodo);
+              this.modal.close();
+          } catch (error) {
+              console.error('Error saving todo:', error);
+          }
+      }
+  }
 
-   cancel() {
-       this.modal.destroy();
-   }
+  cancel() {
+      this.modal.destroy();
+  }
 }
 EOF
 )
-   echo "$TODO_MODAL_COMPONENT_CONTENT" > "$TODO_COMPONENTS_DIRECTORY/todo-modal.component.ts"
+  echo "$TODO_MODAL_COMPONENT_CONTENT" > "$TODO_COMPONENTS_DIRECTORY/todo-modal.component.ts"
 }
 
 function create_formly_datepicker_component() {
-   local COMPONENTS_DIRECTORY=$1
+  local COMPONENTS_DIRECTORY=$1
 
-   local FORMLY_DATEPICKER_COMPONENT_CONTENT=$(cat <<'EOF'
+  local FORMLY_DATEPICKER_COMPONENT_CONTENT=$(cat <<'EOF'
 import { Component } from '@angular/core';
 import { FieldType, FieldTypeConfig } from '@ngx-formly/core';
 import { NzDatePickerModule } from 'ng-zorro-antd/date-picker';
@@ -1655,52 +1694,52 @@ import { ReactiveFormsModule } from '@angular/forms';
 import { CommonModule } from '@angular/common';
 
 interface DatePickerFieldProps {
- placeholder?: string;
- disabled?: boolean;
- nzFormat?: string;
+placeholder?: string;
+disabled?: boolean;
+nzFormat?: string;
 }
 
 type DatePickerFieldConfig = FieldTypeConfig<DatePickerFieldProps>;
 
 @Component({
- selector: 'formly-field-nz-datepicker',
- standalone: true,
- imports: [NzDatePickerModule, ReactiveFormsModule, CommonModule],
- template: `
-   <nz-date-picker
-     [formControl]="formControl"
-     [nzPlaceHolder]="field.props.placeholder || ''"
-     [nzDisabled]="field.props.disabled || false"
-     [nzFormat]="field.props.nzFormat || ''"
-   >
-   </nz-date-picker>
- `,
+selector: 'formly-field-nz-datepicker',
+standalone: true,
+imports: [NzDatePickerModule, ReactiveFormsModule, CommonModule],
+template: `
+  <nz-date-picker
+    [formControl]="formControl"
+    [nzPlaceHolder]="field.props.placeholder || ''"
+    [nzDisabled]="field.props.disabled || false"
+    [nzFormat]="field.props.nzFormat || ''"
+  >
+  </nz-date-picker>
+`,
 })
 export class FormlyFieldNzDatepicker extends FieldType<DatePickerFieldConfig> {
 
 }
 EOF
 )
-   echo "$FORMLY_DATEPICKER_COMPONENT_CONTENT" > "$COMPONENTS_DIRECTORY/formly-datepicker/formly-field-nz-datepicker.component.ts"
+  echo "$FORMLY_DATEPICKER_COMPONENT_CONTENT" > "$COMPONENTS_DIRECTORY/formly-datepicker/formly-field-nz-datepicker.component.ts"
 }
 
 function create_profile_setup() {
-  local PROJECT_PATH=$1
-  info "Creating Profile related files..."
+ local PROJECT_PATH=$1
+ info "Creating Profile related files..."
 
-  # Create Profile directory and its state subdirectory - ADD state directory here
-  local PROFILE_COMPONENTS_DIRECTORY="$PROJECT_PATH/src/app/pages/profile"
-  mkdir -p "$PROFILE_COMPONENTS_DIRECTORY/state" # Create the state subdirectory
+ # Create Profile directory and its state subdirectory - ADD state directory here
+ local PROFILE_COMPONENTS_DIRECTORY="$PROJECT_PATH/src/app/pages/profile"
+ mkdir -p "$PROFILE_COMPONENTS_DIRECTORY/state" # Create the state subdirectory
 
-  create_profile_component "$PROFILE_COMPONENTS_DIRECTORY"
-  create_profile_routes "$PROFILE_COMPONENTS_DIRECTORY"
-  create_profile_service "$PROFILE_COMPONENTS_DIRECTORY/state" # Pass state directory path
-  create_profile_model "$PROFILE_COMPONENTS_DIRECTORY/state"   # Pass state directory path
+ create_profile_component "$PROFILE_COMPONENTS_DIRECTORY"
+ create_profile_routes "$PROFILE_COMPONENTS_DIRECTORY"
+ create_profile_service "$PROFILE_COMPONENTS_DIRECTORY" # Pass state directory path
+ create_profile_model "$PROFILE_COMPONENTS_DIRECTORY"   # Pass state directory path
 }
 
 function create_profile_component() {
-    local PROFILE_COMPONENTS_DIRECTORY=$1
-    local PROFILE_COMPONENT_CONTENT=$(cat <<'EOF'
+   local PROFILE_COMPONENTS_DIRECTORY=$1
+   local PROFILE_COMPONENT_CONTENT=$(cat <<'EOF'
 import { Component, OnInit, inject, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ProfileService } from './state/profile.service';
@@ -1713,176 +1752,169 @@ import { interval, Subscription } from 'rxjs';
 import { takeWhile } from 'rxjs/operators';
 
 @Component({
-  selector: 'app-profile',
-  standalone: true,
-  imports: [
-    CommonModule,
-    NzCardModule,
-    NzAvatarModule,
-    NzButtonModule,
-    NzModalModule
-  ],
-  templateUrl: './profile.component.html',
-  styleUrl: './profile.component.less'
+ selector: 'app-profile',
+ standalone: true,
+ imports: [
+   CommonModule,
+   NzCardModule,
+   NzAvatarModule,
+   NzButtonModule,
+   NzModalModule
+ ],
+ templateUrl: './profile.component.html',
+ styleUrl: './profile.component.less'
 })
 export class ProfileComponent implements OnInit, OnDestroy {
-  private profileService = inject(ProfileService);
-  private modalService = inject(NzModalService);
-  profile: Profile | null = null;
-  sessionExpiry = 3600; // Example session expiry in seconds (1 hour)
-  expiryTimer: Subscription | undefined;
-  remainingTime: number = this.sessionExpiry;
-  showRefreshPopup = false;
+ private profileService = inject(ProfileService);
+ private modalService = inject(NzModalService);
+ profile: Profile | null = null;
+ sessionExpiry = 3600;
+ expiryTimer: Subscription | undefined;
+ remainingTime: number = this.sessionExpiry;
+ showRefreshPopup = false;
 
-  ngOnInit(): void {
-    this.loadProfile();
-    this.startExpiryTimer();
-  }
+ ngOnInit(): void {
+   this.loadProfile();
+   this.startExpiryTimer();
+ }
 
-  ngOnDestroy(): void {
-    this.stopExpiryTimer();
-  }
+ ngOnDestroy(): void {
+   this.stopExpiryTimer();
+ }
 
-  loadProfile(): void {
-    this.profileService.getProfile().subscribe(data => {
-      this.profile = data;
-    });
-  }
+ loadProfile(): void {
+   this.profileService.getProfile().subscribe((data: Profile) => {
+     this.profile = data;
+   });
+ }
 
-  startExpiryTimer(): void {
-    this.expiryTimer = interval(1000)
-      .pipe(takeWhile(() => this.remainingTime > 0 && !this.showRefreshPopup))
-      .subscribe(() => {
-        this.remainingTime--;
-        if (this.remainingTime <= 60 && !this.showRefreshPopup) {
-          this.showRefreshConfirmation();
-        }
-      });
-  }
+ startExpiryTimer(): void {
+   this.expiryTimer = interval(1000)
+     .pipe(takeWhile(() => this.remainingTime > 0 && !this.showRefreshPopup))
+     .subscribe(() => {
+       this.remainingTime--;
+       if (this.remainingTime <= 60 && !this.showRefreshPopup) {
+         this.showRefreshConfirmation();
+       }
+     });
+ }
 
-  stopExpiryTimer(): void {
-    if (this.expiryTimer && !this.expiryTimer.closed) {
-      this.expiryTimer.unsubscribe();
-    }
-  }
+ stopExpiryTimer(): void {
+   if (this.expiryTimer && !this.expiryTimer.closed) {
+     this.expiryTimer.unsubscribe();
+   }
+ }
 
-  showRefreshConfirmation(): void {
-      this.showRefreshPopup = true;
-      this.stopExpiryTimer(); // Pause the main timer
+ showRefreshConfirmation(): void {
+     this.showRefreshPopup = true;
+     this.stopExpiryTimer();
 
-      this.modalService.confirm({
-        nzTitle: 'Session Expiring Soon',
-        nzContent: `<p>Your session is about to expire in <strong id="countdown">{{ remainingTimeForModal }}</strong> seconds. Do you want to extend your session?</p>`,
-        nzOkText: 'Refresh Session',
-        nzCancelText: 'Logout',
-        nzOnOk: () => {
-          this.refreshSession();
-        },
-        nzOnCancel: () => {
-          // Redirect to logout or handle logout logic
-          console.log('Logout action needed here');
-          this.showRefreshPopup = false; // Ensure popup flag is reset
-        },
-        nzAfterOpen: () => {
-          // Countdown inside the modal
-          let modalCountdown = 60;
-          const modalInterval = interval(1000).pipe(takeWhile(() => modalCountdown >= 0)).subscribe(count => {
-            modalCountdown--;
-            this.remainingTimeForModal = modalCountdown; // Update bindable property
-            if (document.getElementById('countdown')) {
-              document.getElementById('countdown')!.textContent = String(modalCountdown >= 0 ? modalCountdown : 0);
-            }
-            if (modalCountdown < 0) {
-              modalInterval.unsubscribe();
-              this.modalService.closeAll(); // Automatically close modal after countdown
-              console.log('Session expired due to no refresh.');
-              this.showRefreshPopup = false; // Ensure popup flag is reset
-              // Handle automatic logout or session expiry action here
-            }
-          });
-          this.modalCountdownSubscription = modalInterval; // Store for potential cleanup
-        },
-        nzAfterClose: () => {
-          this.showRefreshPopup = false; // Reset popup flag when modal is closed
-          this.startExpiryTimer(); // Restart main timer after modal is closed (regardless of action)
-          if (this.modalCountdownSubscription && !this.modalCountdownSubscription.closed) {
-            this.modalCountdownSubscription.unsubscribe(); // Cleanup modal countdown if it's still running
-          }
-        }
-      } as any);
-  }
+     this.modalService.confirm({
+       nzTitle: 'Session Expiring Soon',
+       nzContent: `<p>Your session is about to expire in <strong id="countdown">{{ remainingTimeForModal }}</strong> seconds. Do you want to extend your session?</p>`,
+       nzOkText: 'Refresh Session',
+       nzCancelText: 'Logout',
+       nzOnOk: () => {
+         this.refreshSession();
+       },
+       nzOnCancel: () => {
+         console.log('Logout action needed here');
+         this.showRefreshPopup = false;
+       },
+       nzAfterOpen: () => {
+         let modalCountdown = 60;
+         const modalInterval = interval(1000).pipe(takeWhile(() => modalCountdown >= 0)).subscribe(count => {
+           modalCountdown--;
+           this.remainingTimeForModal = modalCountdown;
+           if (document.getElementById('countdown')) {
+             document.getElementById('countdown')!.textContent = String(modalCountdown >= 0 ? modalCountdown : 0);
+           }
+           if (modalCountdown < 0) {
+             modalInterval.unsubscribe();
+             this.modalService.closeAll();
+             console.log('Session expired due to no refresh.');
+             this.showRefreshPopup = false;
+           }
+         });
+         this.modalCountdownSubscription = modalInterval;
+       },
+       nzAfterClose: () => {
+         this.showRefreshPopup = false;
+         this.startExpiryTimer();
+         if (this.modalCountdownSubscription && !this.modalCountdownSubscription.closed) {
+           this.modalCountdownSubscription.unsubscribe();
+         }
+       }
+     } as any);
+ }
 
-  remainingTimeForModal: number = 60; // Bindable property for modal countdown
-  private modalCountdownSubscription: Subscription | undefined;
+ remainingTimeForModal: number = 60;
+ private modalCountdownSubscription: Subscription | undefined;
 
-  refreshSession(): void {
-    this.profileService.refreshToken().subscribe(
-      response => {
-        console.log('Session refreshed successfully', response);
-        this.remainingTime = this.sessionExpiry; // Reset main timer
-        this.startExpiryTimer();
-        this.showRefreshPopup = false; // Reset popup flag
-        this.modalService.closeAll(); // Close the confirmation modal if it's still open  In a real app, you would update tokens in cookies or storage here.
-      },
-      error => {
-        console.error('Failed to refresh session', error);
-        this.showRefreshPopup = false; // Reset popup flag
-        this.modalService.closeAll(); // Close the confirmation modal
-        // Handle refresh failure (e.g., redirect to login)
-      }
-    );
-  }
+ refreshSession(): void {
+   this.profileService.refreshToken().subscribe(
+     response => {
+       console.log('Session refreshed successfully', response);
+       this.remainingTime = this.sessionExpiry;
+       this.startExpiryTimer();
+       this.showRefreshPopup = false;
+       this.modalService.closeAll();
+     },
+     error => {
+       console.error('Failed to refresh session', error);
+       this.showRefreshPopup = false;
+       this.modalService.closeAll();
+     }
+   );
+ }
 }
 EOF
 )
-    echo "$PROFILE_COMPONENT_CONTENT" > "$PROFILE_COMPONENTS_DIRECTORY/profile.component.ts"
+   echo "$PROFILE_COMPONENT_CONTENT" > "$PROFILE_COMPONENTS_DIRECTORY/profile.component.ts"
 
-    local PROFILE_COMPONENT_TEMPLATE=$(cat <<'EOF'
-<nz-card nzTitle="User Profile" *ngIf="profile">
-  <nz-card-meta
-          nzTitle="{{ profile.name }}"
-          nzDescription="{{ profile.email }}">
-    <nz-avatar nzIcon="user" nzSrc="{{ profile.avatar }}"></nz-avatar>
-  </nz-card-meta>
-  <ng-template nz-card-actions>
-    <button nz-button nzType="primary" (click)="refreshSession()">Refresh Session</button>
-  </ng-template>
-</nz-card>
+   local PROFILE_COMPONENT_TEMPLATE=$(cat <<'EOF'
+<nz-avatar nzIcon="user" style="background-color:#87d068;"></nz-avatar> <span class="profile-name">John Doe</span>
 EOF
 )
-    echo "$PROFILE_COMPONENT_TEMPLATE" > "$PROFILE_COMPONENTS_DIRECTORY/profile.component.html"
+   echo "$PROFILE_COMPONENT_TEMPLATE" > "$PROFILE_COMPONENTS_DIRECTORY/profile.component.html"
 
-    local PROFILE_COMPONENT_LESS=$(cat <<'EOF'
-/* Add custom styles for profile component here if needed */
+   local PROFILE_COMPONENT_LESS=$(cat <<'EOF'
+:host {
+    margin: 0 24px;
+
+    .ant-avatar {
+      margin-right: 8px
+    }
+}
 EOF
 )
-    echo "$PROFILE_COMPONENT_LESS" > "$PROFILE_COMPONENTS_DIRECTORY/profile.component.less"
+   echo "$PROFILE_COMPONENT_LESS" > "$PROFILE_COMPONENTS_DIRECTORY/profile.component.less"
 }
 
 function create_profile_routes() {
-    local PROFILE_COMPONENTS_DIRECTORY=$1
+   local PROFILE_COMPONENTS_DIRECTORY=$1
 
-    # Create Profile routes
-    local PROFILE_ROUTES_CONTENT=$(cat <<'EOF'
+   # Create Profile routes
+   local PROFILE_ROUTES_CONTENT=$(cat <<'EOF'
 import { Routes } from '@angular/router';
 import { ProfileComponent } from './profile.component';
 import { ProfileService } from './state/profile.service';
 
 export const PROFILE_ROUTES: Routes = [
-  {
-    path: '',
-    component: ProfileComponent,
-    providers: [ProfileService]
-  }
+ {
+   path: '',
+   component: ProfileComponent,
+   providers: [ProfileService]
+ }
 ];
 EOF
 )
-    echo "$PROFILE_ROUTES_CONTENT" > "$PROFILE_COMPONENTS_DIRECTORY/profile.routes.ts"
+   echo "$PROFILE_ROUTES_CONTENT" > "$PROFILE_COMPONENTS_DIRECTORY/profile.routes.ts"
 }
 
 function create_profile_service() {
-  local PROFILE_COMPONENTS_DIRECTORY=$1 # Parameter is path to 'state' directory
-  local PROFILE_SERVICE_CONTENT=$(cat <<'EOF'
+ local PROFILE_COMPONENTS_DIRECTORY=$1
+ local PROFILE_SERVICE_CONTENT=$(cat <<'EOF'
 import { Injectable, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
@@ -1890,41 +1922,41 @@ import { Profile } from './profile.model';
 import { AppConfigService } from '../../../app.config.service';
 
 @Injectable({
-  providedIn: 'root'
+ providedIn: 'root'
 })
 export class ProfileService {
-  private http = inject(HttpClient);
-  private config = inject(AppConfigService);
-  private baseUrl = `${this.config.getConfig().restApiEndpoint}`; // Assuming profile endpoint is at root API URL
+ private http = inject(HttpClient);
+ private config = inject(AppConfigService);
+ private baseUrl = `${this.config.getConfig().restApiEndpoint}`;
 
-  getProfile(): Observable<Profile> {
-    return this.http.get<Profile>(`${this.baseUrl}/profile`); // Adjust endpoint if needed
-  }
+ getProfile(): Observable<Profile> {
+   return this.http.get<Profile>(`${this.baseUrl}/profile`);
+ }
 
-  refreshToken(): Observable<any> {
-    return this.http.post<any>(`${this.baseUrl}/refresh-token`, { // Adjust endpoint if needed
-      refresh_token: 'DUMMY_REFRESH_TOKEN' // In real app, get from storage
-    });
-  }
+ refreshToken(): Observable<any> {
+   return this.http.post<any>(`${this.baseUrl}/refresh-token`, {
+     refresh_token: 'DUMMY_REFRESH_TOKEN'
+   });
+ }
 }
 EOF
 )
-  echo "$PROFILE_SERVICE_CONTENT" > "$PROFILE_COMPONENTS_DIRECTORY/profile.service.ts" # Corrected path - no extra /state
+ echo "$PROFILE_SERVICE_CONTENT" > "$PROFILE_COMPONENTS_DIRECTORY/state/profile.service.ts"
 }
 
 function create_profile_model() {
-  local PROFILE_COMPONENTS_DIRECTORY=$1 # Parameter is path to 'state' directory
-  local PROFILE_MODEL_CONTENT=$(cat <<'EOF'
+ local PROFILE_COMPONENTS_DIRECTORY=$1
+ local PROFILE_MODEL_CONTENT=$(cat <<'EOF'
 export interface Profile {
-  name: string;
-  email: string;
-  avatar: string;
-  // Add other profile properties as needed
+ name: string;
+ email: string;
+ avatar: string;
 }
 EOF
 )
-  echo "$PROFILE_MODEL_CONTENT" > "$PROFILE_COMPONENTS_DIRECTORY/profile.model.ts" # Corrected path - no extra /state
+ echo "$PROFILE_MODEL_CONTENT" > "$PROFILE_COMPONENTS_DIRECTORY/state/profile.model.ts"
 }
+
 
 UI_PATH="$CURRENT_DIRECTORY/$PROJECT_NAME/$UI_FOLDER_NAME"
 
